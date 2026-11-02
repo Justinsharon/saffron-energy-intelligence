@@ -1,0 +1,65 @@
+# Saffron Suites — Energy Intelligence
+
+An energy-intelligence product for Saffron Suites, a fictional three-hotel group (Gurugram 220 rooms, Jaipur 160, Goa 140), built for the Masters' Union Applied AI Challenge (PS-12).
+
+It learns each hotel's weather-, occupancy- and event-adjusted baseline, forecasts load and Gurugram peak kVA, and detects waste and faults without alerting on conditions that weather, occupancy or events explain. Each finding comes with evidence, a ₹ cost and a recommended action. It also reconciles monthly bills by component and reports savings against an adjusted IPMVP Option C baseline.
+
+The product **recommends and never controls equipment**. All data is synthetic and the tariffs are fictionalised.
+
+## Status
+
+| Stage | State |
+|---|---|
+| Environment, data audit, cleaning | Done |
+| Hourly feature table, EDA | Done |
+| Per-hotel baseline models (CV(RMSE) / NMBE on held-out months) | Next |
+| Anomaly detector, costed alerts, fault suppression | Not started |
+| Bill reconciliation, peak forecast, IPMVP Option C savings | Not started |
+| Engineer-facing UI at a public URL | Not started |
+
+The detailed progress log, acceptance tests (T1–T10), data schemas and findings are in [CONTEXT.md](CONTEXT.md).
+
+## Repository layout
+
+| Path | Contents |
+|---|---|
+| `src/clean_data.py` | Cleaning rules: raw workbooks to `data/clean/*.parquet` |
+| `src/features.py` | Hourly Gurugram table, unified hourly table for all hotels, cooling degree hours |
+| `data/clean/` | Cleaned parquet tables (generated; rebuild rather than edit) |
+| `notebooks/` | `01_data_cleanliness`, `02_eda`: `.py` sources and executed `.ipynb` |
+| `tools/build_notebook.py` | Compiles a `# %%` percent-format script into an executed notebook |
+| `docs/modelling_approach.md` | Modelling approach |
+| `CONTEXT.md` | Full brief, requirements, schemas, findings, progress log |
+| `OPEN_QUESTIONS.md` | Questions for the problem owner |
+| `CLAUDE.md` | Working rules and conventions for the project |
+
+The two `.docx` files are the source briefs. The raw `PS-12_*.xlsx` workbooks are not in the repository; place them in the project root to re-run the cleaning step.
+
+## Getting started
+
+The project uses [uv](https://docs.astral.sh/uv/) with Python 3.11.
+
+```bash
+uv sync                                   # create the environment
+uv run python src/clean_data.py           # raw .xlsx -> data/clean/*.parquet (needs the workbooks)
+uv run python src/features.py             # -> data/clean/meter_hourly_all.parquet
+uv run python tools/build_notebook.py notebooks/02_eda.py notebooks/02_eda.ipynb
+```
+
+Edit the notebook `.py` file and rebuild; don't hand-edit the `.ipynb`. On Windows, set `PYTHONIOENCODING=utf8` when printing ₹, ° or × in a shell.
+
+## Data handling rules
+
+- **No label leakage.** The detector is tuned only on anomalies starting before 1 Apr 2026 and scored on those from 1 Apr 2026.
+- **Cleaned tables only,** honouring the flags `exclude_from_model` (Gurugram meter faults), `is_imputed` (Jaipur gap), `is_dg`, `is_provisional` (Goa Jul 2026 bill) and `ends_after_midnight` (events).
+- **Total site energy** is `grid_kwh + dg_kwh`.
+- **Time-of-day windows differ per hotel.**
+- **Bills are never corrected,** even where they contain corrupted meter readings.
+
+## Product guardrails
+
+- Recommend, never control. Kitchen exhaust, guest-room thermostats and fire/life-safety/lifts are never automated.
+- Never recommend a CHW setpoint below 6.5 °C or breach the comfort and safety limits.
+- No alerts for conditions explained by weather, occupancy or events. Every alert shows its evidence, and meter faults are suppressed.
+- Any text from an LLM may only state facts present in the data; all numbers come from the models.
+- Savings are claimed only against an adjusted (IPMVP Option C) baseline.
