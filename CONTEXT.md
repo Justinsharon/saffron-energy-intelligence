@@ -168,6 +168,18 @@ Stage 1 ("understand and scope") is partly complete. The environment, data audit
 - [ ] Waste-type list with evidence (tuning window only), anomaly detector, root-cause + alert text, fault suppression, bill reconciliation view, peak forecast, savings (IPMVP C), assistant, UI at public URL.
 - [ ] Problem-owner meeting answers (needs the user).
 
+### Forward plan (ordered; each step lists the acceptance tests it unlocks)
+1. [ ] **Baseline model per hotel** — hourly, features: CDH, humidity, rooms sold, event guests/timing, hour × day-type. Exclude `exclude_from_model` and DG hours. Validate on held-out months (CV(RMSE) <30% hourly / <15% monthly, NMBE ±5%). Event features are required so winter weddings are explained. *Unlocks T2, T5 (exclusion), T9.*
+2. [ ] **Waste-type list** with evidence from the tuning window only (anomalies starting before 1 Apr 2026): staging, hand-mode AHUs after events, PF drop, setpoint, pool pumps, meter fault. Each gets a signature, a ₹ formula and a recommended action.
+3. [ ] **Context-aware detector** — residual vs baseline, with weather/occupancy/event context suppressing explained deviations; separate meter-fault detector (billed columns flat while `kw_avg`/sub-meters live). Report precision/recall/lead time on anomalies from 1 Apr 2026 only. *T1, T3, T4, T5, T6, T8.*
+4. [ ] **Costed alerts** — evidence, ₹/h and ₹/day, named equipment, action; alert ≤2 h after event end for T1; no alert for T2. Respect comfort/safety limits (§9) and CHW ≥ 6.5 °C.
+5. [ ] **Peak/load forecast** — next-day kVA risk vs 1,000 kVA, flexible-load shift recommendations. *T7.*
+6. [ ] **Bill reconciliation** — rebuild bills from meter data per hotel ToD windows; resolve the demand-charge formula (§21); decompose Apr→May GGN bill into weather, occupancy, events, penalty, anomalies. Bills stay untouched. *T9.*
+7. [ ] **Savings (IPMVP Option C)** — adjusted baseline only; faults never counted as savings.
+8. [ ] **Assistant** — LLM text restricted to model-produced numbers; refuses auto control of kitchen exhaust, room thermostats, life-safety, lifts; simulated automation needs override + audit log. *T10.*
+9. [ ] **UI + public URL** — engineer-facing Streamlit: per-hotel overview, alerts with evidence, bill view, forecast, savings, assistant.
+10. [ ] **Final check** — run T1–T10 end to end, confirm numbers against §20, write the submission summary.
+
 ## 19. Cleaning rules and why (verified, not assumed)
 | Issue | Evidence | Treatment |
 |---|---|---|
