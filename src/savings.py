@@ -18,6 +18,18 @@ from bills import TOD, _in_window, tariff
 from features import CLEAN, SITES
 
 APP = CLEAN.parent / "app"
+PF_TARGET = 0.99
+NIGHT_LIGHT_CUT = 0.30          # assumption: corridor / facade / landscape lighting dimmed or sensor-switched after midnight
+VFD_SHARE = 0.30                # capital note: typical saving converting constant-speed pumps to variable flow
+
+
+def _chw_per_degc() -> float:
+    """Lowest metered chiller penalty per degC (5.5 vs 7.0 degC, per load band; recalibration.py) - the conservative choice."""
+    import recalibration as RC
+    pen = RC.fit(RC._frame())["chw_penalty"]
+    return float(pen.min() / 1.5)
+
+
 SHIFT_SHARE = {"laundry_kw": 1.0, "water_heating_kw": 0.7, "ev_chargers_kw": 0.5}   # share of peak-window kWh assumed movable
 
 
@@ -78,10 +90,38 @@ def plan() -> pd.DataFrame:
         # 4. CHW reset to 8 degC in cool, light-load hours (guide allows)
         if s == "GGN":
             ok = (d.temp_c < 24) & (d.chw_setpoint_c == 7.0) & d.chiller_load_tr.between(1, 280) & d.valid
-            kwh = d.chillers_kw[ok].sum() * 0.035
+            per_c = _chw_per_degc()
+            kwh = d.chillers_kw[ok].sum() * per_c
             rows.append(dict(site=s, measure="CHW reset 7 → 8 °C when outdoor < 24 °C and plant load is light", category="Energy", inr=kwh * rkwh,
-                             basis=f"{ok.sum():,} eligible hours, {d.chillers_kw[ok].sum():,.0f} chiller kWh × 3.5 %/°C (guide)",
+                             basis=f"{ok.sum():,} eligible hours, {d.chillers_kw[ok].sum():,.0f} chiller kWh × {per_c * 100:.1f} %/°C (lowest metered penalty per °C)",
                              safety="Within the guide's reset rule; never below 6.5 °C; watch humidity complaints", confidence="Medium"))
+        # 5. PF up to 0.99: energy, FSA and duty are billed per kVAh, so every 0.01 of PF is ~1 % of the energy line
+        from bills import meter_quantities
+        q = meter_quantities(s, raw=False).sum()                     # meter, not bills: the Goa July bill's kVAh is an estimate
+        pf_now = q.grid_kwh / q.grid_kvah
+        t_ = tariff(s)
+        per_kvah = t_["energy"] * (1 + t_["muni"]) + t_["fsa"] + t_["duty"]
+        cut = q.grid_kvah - q.grid_kwh / PF_TARGET
+        already = c[c.rule == "POWER_FACTOR_DROP"].cost_inr.sum()   # repairing the drop episodes is counted above
+        rows.append(dict(site=s, measure=f"Hold PF at {PF_TARGET}: add / retune APFC steps (average PF {pf_now:.3f} today)", category="Energy",
+                         inr=max(cut * per_kvah - already, 0.0),
+                         basis=f"{cut:,.0f} kVAh/yr less at the same kWh × ₹{per_kvah:.2f}/kVAh, minus ₹{already:,.0f} already counted for PF-drop repairs",
+                         safety="No comfort impact; avoid over-correction (leading PF) — size steps with the APFC vendor", confidence="High"))
+        # 6. Night public lighting: 00-05 h draw is above daytime at every hotel
+        lt = d[d.timestamp.dt.hour.between(0, 5)].lighting_kw.sum()
+        rows.append(dict(site=s, measure=f"Dim / sensor-switch public lighting 00:00–06:00 by {NIGHT_LIGHT_CUT:.0%} (keep egress and security lighting)",
+                         category="Energy", inr=lt * NIGHT_LIGHT_CUT * rkwh,
+                         basis=f"{lt:,.0f} kWh/yr of lighting between 00:00 and 06:00 (night mean {d[d.timestamp.dt.hour.between(0, 5)].lighting_kw.mean():.0f} kW vs "
+                               f"{d[d.timestamp.dt.hour.between(6, 17)].lighting_kw.mean():.0f} kW by day) × {NIGHT_LIGHT_CUT:.0%} assumed",
+                         safety="Emergency and egress lighting untouched (NBC); security walk-through before setting levels", confidence="Low (assumed share)"))
+        if s == "GGN":
+            sub = pd.read_parquet(CLEAN / "sub_ggn_hourly.parquet")
+            pk = (sub.chw_pumps_kw + sub.cw_pumps_ct_kw).sum()
+            rows.append(dict(site=s, measure="VFDs on chilled-water and condenser pumps (constant speed today)", category="Capital (note)",
+                             inr=pk * VFD_SHARE * rkwh,
+                             basis=f"{pk:,.0f} kWh/yr of pump energy, flat whatever the plant load; {VFD_SHARE:.0%} typical for variable-flow conversion",
+                             safety="Keep minimum chiller flow; commissioning by the chiller OEM. Capital item — outside the brief's scope, shown as a note",
+                             confidence="Low (capital, typical %)"))
     p = pd.DataFrame(rows)
     bill = pd.read_parquet(CLEAN / "monthly_bills.parquet").groupby("site").total_energy_cost_inr.sum()
     p["pct_of_site_bill"] = p.inr / p.site.map(bill) * 100
@@ -92,7 +132,7 @@ def plan() -> pd.DataFrame:
 NOT_SIZED = [
     "Unsold-room setback via PMS: guest-room FCU/plug load already scales with rooms sold (≈0.2 kW per sold room, ~0 for unsold), so little to gain.",
     "Night base load (GGN ~330 kW 01–05 h): 8–14 % of energy is unmetered 'other'; needs a walk-through audit, not sizable from data.",
-    "Capital measures (chiller replacement, solar, heat recovery) are out of scope; short note only.",
+    "Other capital measures (chiller replacement, solar, heat recovery) are out of scope; the pump VFD line is shown as a note and is not in the headline total.",
 ]
 
 
@@ -139,7 +179,8 @@ if __name__ == "__main__":
     pd.set_option("display.width", 220, "display.max_colwidth", 70)
     print(p[["site", "category", "measure", "inr", "pct_of_site_bill"]].round(1).to_string())
     tot = pd.read_parquet(CLEAN / "monthly_bills.parquet").total_energy_cost_inr.sum()
-    print("total ₹", round(p.inr.sum()), f"{p.inr.sum() / tot * 100:.1f}% of ₹{tot / 1e7:.2f} cr")
+    core = p[p.category != "Capital (note)"]
+    print("total ₹", round(core.inr.sum()), f"{core.inr.sum() / tot * 100:.1f}% of ₹{tot / 1e7:.2f} cr; with capital note {p.inr.sum() / tot * 100:.1f}%")
     print(p.groupby("category").inr.sum())
     for s in ["GGN", "JAI", "GOA"]:
         st = model_stats(s); st.pop("monthly"); print(s, {k: round(v, 2) if isinstance(v, float) else v for k, v in st.items()})

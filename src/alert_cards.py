@@ -15,6 +15,9 @@ EXTRA_TYPES = {     # post-hoc rules (src/demand_ev_rules.py) and the residual l
                                  action="Hold laundry and heat-pump water heating, throttle EV charging (allowed above 920 kVA), stagger banquet AHU pre-cooling. Never shed chillers, kitchen, lifts or life-safety."),
     "EV_CHARGER_NIGHT_ON": dict(label="EV charger drawing power overnight", equipment="EV chargers", severity="Low", guardrail="recommend",
                                 action="Inspect the charger at the panel (likely a stuck session); clear the session or isolate the faulty port."),
+    "STAGING_KWTR": dict(label="Second chiller signature while the BMS shows one", equipment="chiller plant (CH-1 / CH-3)", severity="Medium",
+                         guardrail="auto-ok",
+                         action="Check CH-1 and CH-3 run status at the plant; if both run, stage down to CH-1 alone (it carries up to 280 TR). Also check why the BMS run-status point disagrees."),
     "RESIDUAL_UNEXPLAINED": dict(label="Site load above the weather/occupancy/event baseline", equipment="main meter", severity="Medium",
                                  guardrail="recommend", action="Walk the largest sub-metered loads for the period; no named waste type matches."),
 }
@@ -31,6 +34,7 @@ CAUSE = {
     "CHW_SETPOINT_LOW": "Setpoint lowered (often after a single comfort complaint) and never reset.",
     "DEMAND_NEAR_CONTRACT": "Shiftable loads (laundry, water heating, banquet AHUs) stacked on a hot afternoon peak.",
     "EV_CHARGER_NIGHT_ON": "Charger session stuck on.",
+    "STAGING_KWTR": "A second chiller running at part load that the BMS run-status point does not report (kW/TR doubles at the same load).",
     "RESIDUAL_UNEXPLAINED": "Not identified: the extra load is outside every named waste signature.",
 }
 # Columns plotted as evidence for each rule (from detector.site_frame); the main-meter actual vs baseline is always shown too.
@@ -39,11 +43,11 @@ CHART = {
     "LIGHTING_LEFT_ON": ["lighting_kw", "ev_guests"], "LAUNDRY_IN_PEAK": ["laundry_kw"], "POOL_PUMP_OFF_SCHEDULE": ["pool_pump_kw"],
     "POWER_FACTOR_DROP": ["pf"], "CHILLER_STAGING_LOW_LOAD": ["chillers_kw", "chiller_load_tr", "n_chillers"],
     "CHILLER_PART_LOAD_INEFFICIENCY": ["chillers_kw", "chiller_load_tr", "kw_per_tr"], "CHW_SETPOINT_LOW": ["chw_setpoint_c", "chillers_kw"],
-    "DEMAND_NEAR_CONTRACT": ["kva_max_in_hour"], "EV_CHARGER_NIGHT_ON": ["ev_chargers_kw"], "RESIDUAL_UNEXPLAINED": [],
+    "DEMAND_NEAR_CONTRACT": ["kva_max_in_hour"], "STAGING_KWTR": ["chillers_kw", "chiller_load_tr", "kw_per_tr"], "EV_CHARGER_NIGHT_ON": ["ev_chargers_kw"], "RESIDUAL_UNEXPLAINED": [],
 }
 ONE_OFF = {"LAUNDRY_IN_PEAK", "DEMAND_NEAR_CONTRACT"}        # a batch or a peak, not a condition that runs all day
 DIGEST = {"LAUNDRY_IN_PEAK", "EV_CHARGER_NIGHT_ON"}          # route to the daily digest, not the duty engineer's pager
-LOWER_BOUND = {"CHILLER_STAGING_LOW_LOAD", "CHW_SETPOINT_LOW", "AHU_HAND_MODE"}     # notebook 06: our ₹ is 0.4–0.8x the key's
+LOWER_BOUND = {"AHU_HAND_MODE"}       # CHW re-costed from metered penalty (recalibration.py)     # notebook 06: our ₹ is 0.4–0.8x the key's
 
 
 def _meta(rule: str) -> dict:
@@ -54,10 +58,18 @@ def build_cards() -> pd.DataFrame:
     a = pd.read_parquet(CLEAN / "alerts.parquet").assign(post_hoc=False)
     x = pd.read_parquet(CLEAN / "alerts_demand_ev.parquet").assign(post_hoc=True)
     x["excess_kwh"] = 0.0
+    import recalibration as RC                       # post-hoc (10 Nov): kW/TR staging rule + measured CHW penalty
+    fr = RC._frame()
+    F = RC.fit(fr)
+    k = RC.staging_kwtr_alerts(fr, F).assign(post_hoc=True)
+    k["inr_per_hour"] = k.cost_inr / k.flagged_h
+    k["inr_per_day"] = k.inr_per_hour * 24
+    k["alert_id"] = [f"PH-K{i + 1:02d}" for i in range(len(k))]
+    a = RC.chw_recost(a, fr, F)
     x["inr_per_hour"] = x.cost_inr / x.flagged_h
     x["inr_per_day"] = x.inr_per_hour * 24
     x["alert_id"] = [f"PH-{i + 1:03d}" for i in range(len(x))]
-    c = pd.concat([a.drop(columns=["text"], errors="ignore"), x], ignore_index=True)
+    c = pd.concat([a.drop(columns=["text"], errors="ignore"), x, k], ignore_index=True)
     m = c.rule.map(_meta)
     c["hotel"] = c.site.map(SITES)
     c["title"] = m.map(lambda v: v["label"])
@@ -72,6 +84,7 @@ def build_cards() -> pd.DataFrame:
     c["cost_note"] = c.rule.map(lambda r: "lower-bound estimate" if r in LOWER_BOUND else "")
     c.loc[c.rule == "LAUNDRY_IN_PEAK", "cost_note"] = "peak surcharge only (energy is shifted, not saved)"
     c.loc[c.rule == "DEMAND_NEAR_CONTRACT", "cost_note"] = "excess-demand penalty if this peak stands as the month's MD"
+    c.loc[c.rule == "CHW_SETPOINT_LOW", "cost_note"] = "metered penalty at this load (6.5-10 % kW/TR for 5.5 vs 7.0 °C)"
     c["guard_text"] = c.guardrail.map({"never": "Recommendation only. Never switched off automatically (safety / kitchen-hours item).",
                                        "auto-ok": "Recommendation only. A person approves; the guide would allow automation within limits.",
                                        "recommend": "Recommendation only. A person approves."})

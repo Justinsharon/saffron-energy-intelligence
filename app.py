@@ -171,7 +171,7 @@ def page_overview():
                       "BMS today (brief)": ["1,829", "26%", "40%", "8.3 h (alarm → action)", "66%"],
                       "This product (held-out, from 1 Apr 2026)": [f"{len(c)}", "98%", "96%", "1.0 h (from first appearance)", "rate in Alerts tab"]})
     st.dataframe(t, hide_index=True, width="stretch")
-    st.caption("Held-out scores from notebooks 05/06: detector frozen before scoring labels from 1 Apr 2026. Post-hoc demand/EV rules excluded from these figures.")
+    st.caption("Held-out scores from notebooks 05/06: detector frozen before scoring labels from 1 Apr 2026. Post-hoc rules (contract demand, EV charger, kW/TR staging) are excluded from these figures.")
 
 
 def evidence_chart(r, upto=None):
@@ -378,8 +378,9 @@ def page_forecast():
         st.plotly_chart(style_fig(fig, 340), width="stretch")
         S = F.state()["S"]
         st.caption(f"Out-of-sample accuracy over the year: daily-peak MAPE 5.4%, 59% of days within ±5%, 86% within ±10%. "
-                   f"Only three days exceeded 1,000 kVA (12 May, 18 Jun, 25 Jun); all were caused by shiftable loads stacking on a hot afternoon, which "
-                   f"weather and bookings cannot see — the stacking watch covers that risk.")
+                   f"Only three days exceeded 1,000 kVA (12 May, 18 Jun, 25 Jun); all were shiftable loads stacking on a hot afternoon. "
+                   f"Replayed day by day with only earlier data, the breach-risk warning fired on 14 days and caught 18 Jun and 25 Jun "
+                   f"(12 May had no earlier breach to learn from).")
     with t2:
         c1, c2, c3 = st.columns(3)
         tmax = c1.slider("Tomorrow's max temperature (°C)", 30.0, 46.0, 40.0, 0.5)
@@ -405,11 +406,17 @@ def add_lines(fig):
 def show_risk(a):
     color = {"OK": "success", "STACKING WATCH": "info", "WARNING": "warning", "BREACH RISK": "error"}[a["level"]]
     m = st.columns(4)
-    m[0].metric("Forecast peak", f"{a['peak']:,.0f} kVA", help="Hourly max-kVA forecast")
-    m[1].metric("Peak hour", f"{a['hour']}:00")
+    m[0].metric("Forecast peak", f"{a['peak']:,.0f} kVA", help=f"Model {a['raw_peak']:,.0f} kVA × {a['bias']:.3f}: the daily peak is the highest of 24 noisy hours, "
+                                                             "so it runs above the highest smooth forecast; corrected with earlier days only")
+    m[1].metric("Chance of > 1,000 kVA", "—" if pd.isna(a["p_exceed"]) else f"{a['p_exceed'] * 100:.0f}%",
+                help="Share of earlier high-forecast days whose actual/forecast spread would take this forecast above contract demand")
     m[2].metric("90% upper bound", f"{a['upper']:,.0f} kVA")
-    m[3].metric("Shiftable-load headroom", f"{a['allowance']:,.0f} kVA", help="If laundry, water heating and banquet AHUs ran at connected rating")
-    getattr(st, color)(f"**{a['level']}**" + (f" — {a['why']}" if a["why"] else " — no action needed."))
+    m[3].metric("If shiftable loads stack", f"{a['stack_peak']:,.0f} kVA", help=f"Forecast + {a['stack_increment']:,.0f} kVA: {a['stack_basis']}")
+    getattr(st, color)(f"**{a['level']}** at {a['hour']}:00" + (f" — {a['why']}." if a["why"] else " — no action needed."))
+    with st.expander("Stacking scenario: what the shiftable loads drew on the breach days"):
+        st.dataframe(a["stack_table"].round(1), hide_index=True, width="stretch")
+        st.caption("The year's three >1,000 kVA days (12 May, 18 Jun, 25 Jun, from the meter) were not weather: laundry, water heating and banquet "
+                   "AHUs ran far above their usual draw at the 13–17 h peak. Weather and bookings cannot see that, so it is shown as a scenario.")
     if a["plan"] is not None:
         st.markdown("**Recommended load moves (recommend only — a person approves; chillers, kitchen, lifts, guest rooms and life-safety are never shed):**")
         p = a["plan"][["load", "action", "basis", "kw_moved", "relief_kva", "demand_after_kva", "reaches_target"]]
@@ -420,16 +427,17 @@ def page_savings():
     st.title("Savings")
     p = savings_plan()
     yr = bills().total_energy_cost_inr.sum()
+    core = p[p.category != "Capital (note)"]
+    capx = p[p.category == "Capital (note)"]
     k = st.columns(4)
-    k[0].metric("Identified savings / year", inr(p.inr.sum()))
-    k[1].metric("Share of group bill", f"{p.inr.sum() / yr * 100:.1f}%", help="Brief target 8–12%")
-    for i, cat in enumerate(["Energy", "ToD", "Demand"]):
-        pass
-    by = p.groupby("category").inr.sum()
+    k[0].metric("Identified savings / year", inr(core.inr.sum()), help="Operational and low-cost measures; capital items excluded")
+    k[1].metric("Share of group bill", f"{core.inr.sum() / yr * 100:.1f}%", delta=f"{core.inr.sum() / yr * 100 - 8:+.1f} pts vs 8% target", delta_color="normal")
+    by = core.groupby("category").inr.sum()
     k[2].metric("Energy / ToD / Demand", " / ".join(inr(by.get(c, 0)) for c in ["Energy", "ToD", "Demand"]))
-    k[3].metric("Target (8–12%)", f"{inr(0.08 * yr)} – {inr(0.12 * yr)}")
-    st.warning(f"Honest gap: the measures we can size from the data reach {p.inr.sum() / yr * 100:.1f}% of the bill, below the 8–12% target. The labelled waste "
-               "in the data set is itself ~2.9% of the bill (brief). Reaching 8%+ needs measures the data cannot size (base-load audit, capital items) — listed below.")
+    k[3].metric("With capital note (pump VFDs)", f"{p.inr.sum() / yr * 100:.1f}%", help=f"+{inr(capx.inr.sum())}/yr; capital is outside the brief's scope")
+    st.warning(f"Honest gap: operational measures reach {core.inr.sum() / yr * 100:.1f}% of the bill, {p.inr.sum() / yr * 100:.1f}% with pump VFDs, below the 8–12% target. "
+               "The labelled waste in the data set is itself ~2.9% of the bill. The rest needs a base-load audit and capital items. "
+               "Lines marked 'Low' confidence rest on a stated assumption, not a measurement.")
     st.dataframe(p[["hotel", "category", "measure", "inr", "pct_of_site_bill", "basis", "safety", "confidence"]].style.format({"inr": "₹{:,.0f}", "pct_of_site_bill": "{:.1f}%"}),
                  hide_index=True, width="stretch")
     from savings import NOT_SIZED
@@ -600,8 +608,11 @@ catches persistent unexplained load, and a separate stream finds meter data faul
 | Time to detect (High, from first appearance) | median 1.0 h | < 2 h |
 | Day-ahead peak (Gurugram) | MAPE 5.4 %, 59 % of days within ±5 % | ±5 % |
 
-**No label leakage.** Rules and thresholds were set on anomalies before 1 Apr 2026 and frozen; results are reported on later labels. The contract-demand and
-EV-charger rules were added after seeing held-out gaps and are labelled *post-hoc*.
+**No label leakage.** Rules and thresholds were set on anomalies before 1 Apr 2026 and frozen; results are reported on later labels. Three rules were added
+after seeing held-out gaps and are labelled *post-hoc*: contract demand, EV charger at night, and a kW/TR staging rule (the BMS run-status point reads one
+chiller while the plant draws two chillers' worth; defined on March tuning data, threshold at the empty gap in its kW/TR distribution — 7 of 7 tuning alerts
+and 15 of 17 later alerts overlap a labelled anomaly). The chilled-water setpoint cost uses the metered penalty (6.5–10 % kW/TR for 5.5 vs 7.0 °C) instead of
+the guide's 3.5 %/°C. Day-ahead demand risk adds a bias correction, P(>1,000 kVA) and a stacking scenario from earlier breach days.
 
 **Guardrails.** Recommend only — a person approves. Kitchen exhaust, guest-room thermostats, lifts and life-safety are never automated. CHW never below 6.5 °C.
 Meter faults are never alerts or savings, and bills are never altered. LLM text is checked: every number must exist in the model outputs.

@@ -93,21 +93,39 @@ def tool_list_alerts(site: str | None = None, date_from: str | None = None, date
                                        action=r.action) for r in c.itertuples()])
 
 
+def _risk_out(a: dict) -> dict:
+    plan = None if a["plan"] is None else [dict(load=r.load, action=r.action, relief_kva=round(r.relief_kva)) for r in a["plan"].itertuples()]
+    return dict(forecast_peak_kva=round(a["peak"]), peak_hour=a["hour"], upper90_kva=round(a["upper"]),
+                chance_above_1000_kva_pct=None if a["p_exceed"] != a["p_exceed"] else round(a["p_exceed"] * 100),
+                stacking_scenario_kva=round(a["stack_peak"]), stacking_basis=a["stack_basis"], risk=a["level"], reason=a["why"],
+                contract_demand_kva=1000, shift_plan=plan)
+
+
 def tool_forecast_day(date: str) -> dict:
-    f = pd.read_parquet(CLEAN / "forecast_ggn_daily.parquet")
-    r = f[f.date == pd.Timestamp(date)]
-    if not len(r):
-        return dict(error="No forecast for that date (data covers 1 Oct 2025 – 30 Sep 2026, Gurugram only).")
-    r = r.iloc[0]
-    return dict(hotel="Gurugram", date=date, forecast_peak_kva=round(r.pred_peak), peak_hour=int(r.pred_peak_hour), upper90_kva=round(r.upper90),
-                risk=r.risk, reason=r.why, actual_peak_kva=None if pd.isna(r.actual_peak) else round(r.actual_peak), contract_demand_kva=1000)
+    import forecast_app
+    try:
+        w, a = forecast_app.day_view(date)
+    except Exception:
+        return dict(error="No forecast for that date (data covers 8 Oct 2025 – 30 Sep 2026, Gurugram only).")
+    if w.empty:
+        return dict(error="No forecast for that date (data covers 8 Oct 2025 – 30 Sep 2026, Gurugram only).")
+    return dict(hotel="Gurugram", date=date, actual_peak_kva=round(float(w.actual_kva.max())), **_risk_out(a))
+
+
+def tool_forecast_scenario(max_temp_c: float, conference_guests: int = 0) -> dict:
+    """What-if for tomorrow at Gurugram: a weekday with this max temperature and a 09:00-18:00 conference."""
+    import forecast_app
+    w, a = forecast_app.scenario("2026-05-20", float(max_temp_c), int(conference_guests))
+    return dict(hotel="Gurugram", scenario=f"weekday, max {float(max_temp_c):.0f} °C, conference {int(conference_guests)} guests 09:00-18:00", **_risk_out(a))
 
 
 def tool_savings_plan() -> dict:
     from savings import plan
     p = plan()
     tot = pd.read_parquet(CLEAN / "monthly_bills.parquet").total_energy_cost_inr.sum()
-    return dict(total_inr=round(p.inr.sum()), pct_of_group_bill=round(p.inr.sum() / tot * 100, 1),
+    core = p[p.category != "Capital (note)"]
+    return dict(total_inr=round(core.inr.sum()), pct_of_group_bill=round(core.inr.sum() / tot * 100, 1),
+                with_capital_note_inr=round(p.inr.sum()), with_capital_note_pct=round(p.inr.sum() / tot * 100, 1), target_pct="8-12",
                 by_category_inr=p.groupby("category").inr.sum().round(0).to_dict(),
                 measures=[dict(hotel=r.hotel, measure=r.measure, category=r.category, inr=round(r.inr), safety=r.safety) for r in p.itertuples()])
 
@@ -120,6 +138,8 @@ TOOLS = {
     "list_alerts": (tool_list_alerts, "Detected waste alerts with evidence, ₹ and action, largest ₹ first.",
                     {"site": "string, optional", "date_from": "YYYY-MM-DD optional", "date_to": "YYYY-MM-DD optional", "top": "integer, optional"}),
     "forecast_day": (tool_forecast_day, "Gurugram day-ahead peak-kVA forecast and contract-demand risk for a date.", {"date": "YYYY-MM-DD"}),
+    "forecast_scenario": (tool_forecast_scenario, "Gurugram what-if for tomorrow: weekday with a given max temperature and conference size; contract-demand risk and shift plan.",
+                          {"max_temp_c": "string number, e.g. 40", "conference_guests": "integer, optional"}),
     "savings_plan": (tool_savings_plan, "Sized savings measures (energy / ToD / demand) with safety notes.", {}),
 }
 
@@ -184,6 +204,10 @@ def _route(q: str) -> list[tuple[str, dict]]:
         return [("explain_bill_change", dict(site=site, month_a=a, month_b=b))]
     if "bill" in ql or "reconcil" in ql or "provisional" in ql:
         return [("bill_reconciliation", dict(site=site, month=ym[0] if ym else None))]
+    tm = re.search(r"(\d{2}(?:\.\d)?)\s*°?\s*c\b", ql)
+    if tm and ("tomorrow" in ql or "what if" in ql):
+        g = re.search(r"(\d{2,4})\s*(?:-|\s)?(?:guest|people|pax|delegate)", ql)
+        return [("forecast_scenario", dict(max_temp_c=float(tm.group(1)), conference_guests=int(g.group(1)) if g else (300 if "conference" in ql else 0)))]
     if "forecast" in ql or "risk" in ql or "tomorrow" in ql or "peak" in ql or "kva" in ql:
         d = re.search(r"20\d\d-\d\d-\d\d", q)
         return [("forecast_day", dict(date=d.group(0) if d else "2026-06-18"))]
@@ -204,9 +228,14 @@ def _fallback_text(calls: list) -> str:
             parts += [f"- {a['hotel']} · {a['title']} from {a['start']} ({a['hours']} h), ₹{a['inr']:,}. {a['action']}" for a in res["alerts"]]
         elif name == "bill_reconciliation":
             parts += [f"- {r['month']}: {r['status']} — billed ₹{r['billed_total']:,.0f}. {r['note']}" for r in res["rows"]]
-        elif name == "forecast_day":
-            parts.append(res.get("error") or f"{res['date']}: forecast peak {res['forecast_peak_kva']} kVA at {res['peak_hour']}:00, 90% bound "
-                                              f"{res['upper90_kva']} kVA, risk {res['risk']}. {res['reason']}")
+        elif name in ("forecast_day", "forecast_scenario"):
+            if res.get("error"):
+                parts.append(res["error"])
+            else:
+                parts.append(f"{res.get('date', res.get('scenario'))}: forecast peak {res['forecast_peak_kva']} kVA at {res['peak_hour']}:00, "
+                             f"chance above 1,000 kVA {res['chance_above_1000_kva_pct']}%, if shiftable loads stack {res['stacking_scenario_kva']} kVA. "
+                             f"Risk {res['risk']}. {res['reason']}")
+                parts += [f"- {p['action']} (≈{p['relief_kva']} kVA)" for p in (res["shift_plan"] or [])]
         elif name == "savings_plan":
             parts.append(f"Identified savings ₹{res['total_inr']:,} ({res['pct_of_group_bill']}% of the group bill):")
             parts += [f"- {m['hotel']} · {m['measure']}: ₹{m['inr']:,} ({m['category']})" for m in res["measures"]]

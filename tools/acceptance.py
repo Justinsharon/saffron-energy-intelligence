@@ -66,8 +66,9 @@ report("T6", len(a) > 0 and "BMS log" in a.evidence.iloc[0] and "7.0" in a.actio
 # T7 40 degC weekday + large conference
 import forecast_app as F  # noqa: E402
 w_, s = F.scenario("2026-05-20", 40.0, 318)
-report("T7", s["level"] != "OK" and s["plan"] is not None, f"forecast {s['peak']:,.0f} kVA at {s['hour']}:00, bound {s['upper']:,.0f}; level {s['level']}; "
-       f"moves: {', '.join(s['plan'].load) if s['plan'] is not None else '-'} (a >1,000 kVA forecast is not reachable from weather+events; see notebook 07)")
+report("T7", s["level"] == "BREACH RISK" and s["plan"] is not None,
+       f"forecast {s['peak']:,.0f} kVA at {s['hour']}:00, P(>1,000) {s['p_exceed'] * 100:.0f}%, stacking scenario {s['stack_peak']:,.0f} kVA; level {s['level']}; "
+       f"moves: {', '.join(s['plan'].load)}")
 
 # T8 Goa pool pumps 24 h from 10 Jun 2026
 a = first("GOA", "POOL_PUMP_OFF_SCHEDULE", "2026-06-10", "2026-06-12")

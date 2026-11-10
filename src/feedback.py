@@ -1,8 +1,8 @@
 """Engineer-trust test: a fixed set of 20 alerts to rate, and storage that survives app restarts.
 
 Why a fixed set: the brief's metric is "2 engineers rate 20 alerts, mean ≥ 4/5", so every rater must see the same 20.
-The set is chosen by rule, not by hand: held-out period only (start ≥ 1 Apr 2026), one alert per hotel × waste type
-(the largest ₹ of each, so every kind of alert is judged), then the next largest ₹ until there are 20.
+The set was chosen by rule, not by hand: held-out period only (start ≥ 1 Apr 2026), one alert per hotel × waste type
+(the largest ₹ of each, so every kind of alert is judged), then the next largest ₹ until there are 20. Frozen as IDs on 10 Nov.
 
 Storage: Streamlit Cloud's disk is wiped on restart, so ratings go to a private GitHub Gist when the secrets
 GITHUB_TOKEN (gist scope) and RATINGS_GIST_ID are set; otherwise to data/feedback/ratings.csv (fine locally).
@@ -23,12 +23,14 @@ COLUMNS = ["time", "rater", "role", "alert_id", "usefulness", "would_act", "caus
 ROUND = 2          # card wording version: 1 = before the 10 Nov dry-run fixes (no "round" column saved), 2 = after
 
 
+# Frozen on 10 Nov (first selection by the rule above) so every round rates the same 20 alerts even after costs are recalibrated.
+RATING_IDS = ["AL-0042", "AL-0046", "AL-0049", "AL-0053", "PH-001", "AL-0069", "PH-003", "AL-0074", "AL-0081", "PH-004",
+              "AL-0086", "AL-0090", "AL-0104", "AL-0116", "AL-0120", "AL-0122", "AL-0125", "AL-0126", "AL-0130", "AL-0143"]
+
+
 def rating_set(n: int = 20) -> pd.DataFrame:
     c = pd.read_parquet(APP / "cards.parquet")
-    h = c[c.start >= "2026-04-01"].sort_values("cost_inr", ascending=False)
-    first = h.groupby(["site", "rule"], sort=False).head(1)
-    rest = h.drop(first.index).head(max(0, n - len(first)))
-    return pd.concat([first, rest]).head(n).sort_values("start").reset_index(drop=True)
+    return c[c.alert_id.isin(RATING_IDS)].sort_values("start").head(n).reset_index(drop=True)
 
 
 def _secret(name):

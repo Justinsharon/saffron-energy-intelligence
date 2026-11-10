@@ -21,17 +21,18 @@ def state():
     return _STATE
 
 
-def assess(pred_hourly: pd.Series, hours: pd.Series) -> dict:
+def assess(pred_hourly: pd.Series, hours: pd.Series, before=None) -> dict:
+    """Risk for one forecast day. `before` = the day itself in replay (only earlier days inform bias, spread and stacking)."""
+    import peak_risk as R
     s = state()
     pk = float(pred_hourly.max())
     ph = int(hours.iloc[int(pred_hourly.to_numpy().argmax())])
-    allow, allow_tab = F.stack_allowance(s["hot"], ph, s["pf"])
-    level, why = F.risk_level(pk, s["fac"], allow)
+    r = R.assess(pk, ph, s["S"], s["d"], s["hot"], s["pf"], before=before)
     plan = None
-    if level != "OK":
-        base = pk * s["fac"] if level in ("BREACH RISK", "WARNING") else pk + allow
-        plan = F.shift_plan(s["hot"], ph, base, s["pf"], mode="bound" if level in ("BREACH RISK", "WARNING") else "stack")
-    return dict(peak=pk, hour=ph, upper=pk * s["fac"], allowance=allow, level=level, why=why, plan=plan, allow_tab=allow_tab)
+    if r["level"] != "OK":
+        base = r["stack_peak"] if r["stack_peak"] > r["upper"] else r["upper"]
+        plan = F.shift_plan(s["hot"], ph, base, s["pf"], mode="stack" if r["stack_peak"] > r["upper"] else "bound")
+    return dict(r, plan=plan, allowance=r["stack_increment"])
 
 
 def day_view(date) -> tuple[pd.DataFrame, dict]:
@@ -39,7 +40,7 @@ def day_view(date) -> tuple[pd.DataFrame, dict]:
     h = pd.read_parquet(CLEAN / "forecast_ggn_hourly.parquet")
     w = h[h.timestamp.dt.normalize() == pd.Timestamp(date)].copy()
     w["hour"] = w.timestamp.dt.hour
-    return w, assess(w.pred_kva.reset_index(drop=True), w.hour.reset_index(drop=True))
+    return w, assess(w.pred_kva.reset_index(drop=True), w.hour.reset_index(drop=True), before=pd.Timestamp(date))
 
 
 def scenario(date, tmax: float, guests: int, start_h: int = 9, end_h: int = 18) -> tuple[pd.DataFrame, dict]:
