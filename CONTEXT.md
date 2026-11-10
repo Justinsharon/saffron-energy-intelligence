@@ -33,7 +33,7 @@ Users: duty engineer (alerts on shift), chief engineer (baseline, kW/TR, recurri
 
 **Deliberate data issues:** Gurugram meter faults (flat lines/zeros); 10-hour Jaipur gap; 24 duplicate Goa rows; two Gurugram sub-meters swapped for March 2026; one provisional (estimated) Goa bill; event end times past midnight recorded as 23:59; sub-meters don't sum exactly to main meter.
 
-**Anti-leakage rule:** do NOT look at `anomaly_labels` beyond the tuning window (events before **1 Apr 2026**). Report all results on anomalies **from 1 Apr 2026**.
+**Anti-leakage rule:** do NOT use `anomaly_labels` beyond the tuning window (events before **1 Apr 2026**) to build or tune anything. Report all results on anomalies **from 1 Apr 2026**. *Update (owner-permitted):* labels from 1 Apr 2026 may be used to **check** accuracy and precision (diagnostics only, via `evaluation.heldout_labels_for_diagnostics()`), never in the model proper; any change made after seeing them is post-hoc.
 
 ## 5. Requirements
 **Must have**
@@ -105,7 +105,7 @@ Users: duty engineer (alerts on shift), chief engineer (baseline, kW/TR, recurri
 ## 10. Bill mechanics (Gurugram May 2026 worked example, total ₹35,24,186)
 - Energy: kVAh × ₹7.10 (kVAh = kWh ÷ PF; each 0.01 PF drop ≈ +1% kVAh)
 - ToD net: peak kVAh × ₹1.00 − off-peak kVAh × ₹0.75
-- Demand: min(billing demand, CD) × ₹290 (75%-of-CD floor)
+- Demand: min(MD, CD) × ₹290 — **confirmed by the problem owner: bills follow min(MD, CD)** (the 75%-of-CD floor from the tariff sheet is unconfirmed, see §21 item 2)
 - Excess-demand penalty: (MD − CD, if >0) × ₹580 (2× rate)
 - Fuel surcharge ₹0.47/kVAh; electricity duty ₹0.10/kVAh; municipal tax 2% of energy+demand
 - Diesel: kWh × ₹27.56 (~3× grid cost). May avg PF 0.949.
@@ -164,16 +164,51 @@ Stage 1 ("understand and scope") is partly complete. The environment, data audit
 - [x] **Feature engineering** — `src/features.py`: `gurugram_hourly()` (15-min → hourly, same schema as Jaipur/Goa), `unified_hourly()` (three hotels, one hourly table → `data/clean/meter_hourly_all.parquet`), `cooling_degree_hours()`.
 - [x] **EDA** — `notebooks/02_eda.ipynb`. Findings in section 20.
 - [x] **Project docs** — this file and `CLAUDE.md`; `tools/build_notebook.py` compiles the `# %%` scripts into executed notebooks.
-- [ ] **Baseline models** per hotel (hourly; CV(RMSE) <30% hourly / <15% monthly, NMBE ±5%; held-out months). NEXT.
-- [ ] Waste-type list with evidence (tuning window only), anomaly detector, root-cause + alert text, fault suppression, bill reconciliation view, peak forecast, savings (IPMVP C), assistant, UI at public URL.
-- [ ] Problem-owner meeting answers (needs the user).
+- [x] **Check-in 1 deck** (`PS-12 Problem Breakdown.pptx`, 8 slides, Team 12) — problem framing, today's process, sizing, root causes, scope/timeline, success metrics, risks, confirmed answers. Content folded into §20–§22.
+- [x] **Baseline models** per hotel — `src/baseline.py` + `notebooks/03_baseline.ipynb`. Ridge + shallow LightGBM (Huber) and their average, on weather, rooms/covers, events (banquet ±1 h; "23:59" events assumed to end 01:00), hour × weekend. Held-out-month results (ensemble, ASHRAE G14): leave-one-month-out hourly CV(RMSE) GGN 8.3% / JAI 5.0% / GOA 5.4%, monthly 3.4 / 1.1 / 2.8%, NMBE within ±0.1%; stricter rolling origin (train 6–11 months, predict next) hourly 8.9 / 5.6 / 6.9%, monthly ≤4.2%, NMBE ≤2.05%. All 18 model×scheme×site rows pass all four thresholds (<30% / <15% / ±5%). Out-of-fold predictions saved to `data/clean/baseline_oof.parquet` for the detector.
+  - Events matter: removing them raises GGN hourly CV(RMSE) 8.8→10.8% and leaves a +77 kW (+13%) residual on >300-guest evenings; with them it is −0.6 kW (T2 basis). Weather matters most at GGN (8.8→13.1%).
+  - Residual std: GGN 39 kW (8.3% of mean), JAI 12 kW, GOA 13 kW; lag-1 autocorrelation ≈0.85, so detect persistent deviations, with hour-dependent thresholds.
+  - No holiday calendar exists and none will be supplied (confirmed): day type stays weekday/weekend.
+  - Caveats: one training year contains the labelled waste (baseline = typical, not ideal operation); no holiday calendar; end-time assumption barely moves metrics (00:00–03:00 tested). All-year production fits for forecast / IPMVP are not made yet.
+- [x] **Waste-type list** — `src/waste_types.py` + `notebooks/04_waste_types.ipynb`. 11 types (signature, suppressing context, ₹ formula, action, guardrail class). Evidence from the tuning window only (40 labels, 9 types); every signature separates cleanly from normal (thinnest margin: AHU re-heat, 45 vs 29 kW). CHW-setpoint and Jaipur/Goa chiller rules have no tuning example (CHW is 7.0 °C in every tuning-window hour) → defined from the guide, untuned. ₹ formula reproduces the key within ~1.0× for 6 types (AHU 0.8×, staging 0.7× — conservative, we cost only hours where the signature holds). All catalogue actions pass a guardrail check (CHW ≥6.5 °C, no life-safety/thermostats; kitchen exhaust = never automate).
+- [x] **Detector** — `src/detector.py`, `src/evaluation.py`, `notebooks/05_detector.ipynb`; alerts in `data/clean/alerts.parquet`, faults in `meter_faults.parquet`. Rule layer (profiles of normal per hour × temperature band × event state × plant load, fitted on the tuning window with labelled hours removed) + residual layer vs the baseline (z≥4, ≥8% of load; zero tuning false alerts) + raw-column meter-fault stream (T5).
+  - Tuning (<1 Apr): precision 100%, recall 100% (38 of 38), both fault labels found — not evidence of generalisation (all tuning types had a rule).
+  - **Held-out (≥1 Apr 2026, 69 waste labels, 105 alerts):** precision **98%** (typed 96%) vs ≥70% ✓; recall High+Medium **96%** (44/46) vs ≥75% ✓; 94% of the key's ₹ found; both fault labels found, no waste alert inside a fault window ✓; **time to detect High: measured from first appearance in the data (owner's definition, Q15): median 1.0 h, 13 scored, 3 High labels of unruled types not scoreable — target <2 h MET; from label start median 3.0 h, 15% within 2 h (secondary)** (13 High labels with a fresh alert; 1 pre-alerted). Cause later diagnosed (see below): label windows open before the signature does.
+  - Gaps: no rule for `CONTRACT_DEMAND_BREACH` (3 labels) or `EV_CHARGER_FAULT` (2); 2 of 5 got an overlapping alert by coincidence. The frozen detector was not patched; both gaps were later closed by separate post-hoc rules (see "Post-hoc demand and EV rules" below).
+  - Acceptance scenarios from the alert output (dates from the brief, not labels): T1 alert 2.0 h after event end ✓ (at the limit); T4 PF alert 1 h after 23 May ✓; T5 fault found, 0 waste alerts in window ✓; T6 CHW alert raised 13 May 09:00 citing the BMS log entry, action "reset to 7.0 °C" ✓; T8 Goa pump alert 10 Jun ✓; T3 Jaipur chiller alert 5 Apr; T2 — 14 of 132 big events have an alert starting in the event window (7 are lighting left on after the event ends; others are unrelated rules) — not clean, see notebook.
+  - **Leakage disclosure:** the scorer was amended once after the first held-out run (time-to-detect now ignores alerts raised before the label started — first run gave an implausible 0.0 h median; CHW rule mapped to label type `CHW_SETPOINT_LOWERED` for "typed" precision). No rule, threshold or profile was changed after seeing held-out results. The first run exposed the two unsupported label types above. **Any further detector change is no longer a clean held-out result** and must be labelled post-hoc.
+  - **Held-out diagnostics (`notebooks/06_heldout_diagnostics.ipynb`, owner-permitted: labels from 1 Apr may be used to *check*, never to fit; detector untouched):**
+    - Strict matching: type-matched precision 96.2% (any-label 98.1%); type-matched recall High+Medium 93.5% (43/46). The 3 misses are all `CONTRACT_DEMAND_BREACH`; every label with a rule was detected. Of the 4 non-type-matched alerts, 2 are the tail of the March staging episode (a tuning label running to 3 Apr) and 2 overlap staging labels — none lacks a real label. T2: all 14 big-event-window alerts overlap a labelled anomaly (0 false alarms on events); one (heat/cool, wedding night 12 Dec) is type-mismatched against an AHU-override label.
+    - **Time to detect is a label-window effect, not a slow detector.** Staging labels open at 22:00 but the second chiller appears a median 2.0 h later (29 h and 52 h later for two labels), and our alert follows the signature by 1.0 h in 11/11 cases (100% within 2 h of the signature, 0% within 2 h of the label start; minimum possible from label start is 3 h with hourly data). PF and CHW alerts come 1.0 h after onset. Owner confirmed (Q15) time to detect runs from first appearance in the data, so the onset-based figure (`evaluation.onset_ttd`) is the headline and label-start is secondary.
+    - Gaps are catchable but would be post-hoc: kVA > 920 / 1,000 (all 9 hours above 920 in the year lie inside the 3 breach labels → a brief-threshold rule would be exact; belongs in the peak/demand-forecast step); EV charger stuck on (~6.0 kW at night vs 0.0 normal p99 in the tuning window). Both now built as post-hoc rules (below).
+    - ₹ accuracy (held-out): kitchen, laundry, pool, PF match the key at ~1.0×; AHU 0.79×; **staging 0.44× and CHW 0.50×** — ours are conservative (staging costs only metered two-chiller hours; CHW uses 3.5 %/°C vs 5–13 % observed in the EDA). Show ₹ as a lower-bound estimate.
+    - Baseline in Apr–Sep (out-of-fold): hourly CV(RMSE) GGN 8.4 / JAI 5.4 / GOA 6.9 %, monthly 3.1 / 1.6 / 3.9 %, NMBE within ±0.8 % — holds in the held-out months.
+  - Year-wide: 146 alerts (GGN 2.2/week, JAI 0.4, GOA 0.2), ₹13.4 L flagged (1.8% of the bill); top 20% of alerts hold 69% of the ₹.
+- [x] **Day-ahead load + peak-kVA forecast (GGN)** — `src/forecast.py` + `notebooks/07_forecast.ipynb`; outputs `data/clean/forecast_ggn_daily.parquet`, `forecast_ggn_hourly.parquet`. Ridge + shallow LightGBM (with day-ahead lags: kVA 24 h / 168 h earlier, previous day's max/mean), hourly kVA, daily peak = max of hourly. No labels used; thresholds from the guide/tariff (920 EV-throttle, 1,000 contract demand, 90% watch line).
+  - **Accuracy:** hourly kVA CV(RMSE) 7.8% (LOMO) / 8.2% (rolling Apr–Sep); daily-peak MAPE **5.4% / 5.2%**, bias −2.8%; **59% of days within ±5%**, 86% within ±10%. Beats persistence (11.4% MAPE) and same-weekday-last-week (12.8%). A 1.5 °C weather-forecast error raises MAPE only to 5.6%. Next-day kW load = notebook 03 baseline (8.3% hourly CV(RMSE)).
+  - **±5% target: met on average accuracy at best, NOT as a per-day guarantee** — hourly noise is ~44 kVA (8.7%), and the daily peak is the highest of 24 noisy hours, so ±5% (±33 kVA) is below the noise floor.
+  - **Attempts to raise the ±5% hit rate (LOMO, notebook 07 section 2):** a fitted multiplier on the predicted peak (MAPE 5.3%, 55.1% within 5%), a direct daily-peak boosting model (5.7%, 52.2%) and boosting + ridge (5.3%, 56.7%) — none beats the hourly model's 5.4% / 59.2%, so the model is unchanged. The one-off script is not kept. Report the 90% upper bound (covers 90% of days) alongside the hit rate.
+  - **The >1,000 kVA days (12 May 1,086; 18 Jun 1,066; 25 Jun 1,032 — the only ones in the year; ₹49,880 + ₹38,338 penalties reproduced from MD) are load stacking, not weather:** laundry ~152 vs 73 kW, water heating ~67 vs 21, banquet AHUs ~130 vs 46, all at 13–17 h on ~40 °C days. Weather/occupancy/events cannot predict that; the model forecast 779–795 kVA on those days.
+  - **Decision:** with weather, occupancy and events as the only inputs, the >1,000 kVA days are **not predictable**; they are a managed risk handled by the stacking watch, not a forecast target. **If a daily hotel schedule is provided** (next-day timing of laundry, heat-pump water heating and banquet pre-cooling; see OPEN_QUESTIONS #16), the stack can be mapped directly: add the planned kW at the planned hours as a forecast input in `src/forecast.py`, use it in place of the connected-rating allowance on days that have a plan, and keep the 90% watch as the fallback. Three events cannot establish precision either way.
+  - **Warning design:** (1) statistical 90% upper bound (×1.164) → WARNING ≥920 / BREACH RISK ≥1,000: caught 1 of 3 breach days, 11 days flagged; (2) **stacking watch** — forecast + Σ(connected − typical kW) of laundry/water heating/banquet AHUs (equipment register) ≥ 900 kVA: with it 3 of 3 caught, 50 days flagged (13.7%; 47 not breaches). **The watch was added after seeing (1) miss two days → its 3/3 is in-sample, not validated;** three events cannot establish precision/recall.
+  - **Shift plan (recommend only):** laundry, water heating, banquet AHU staggering, EV throttle (allowed >920 kVA); never chillers/kitchen/lifts/thermostats/life-safety. Retrospective estimate: moving laundry + water heating at 12–18 h would have cut the three breach days to 863/844/808 kVA (laundry alone: 933/911/876) — an estimate, not a saving.
+  - **T7 (40 °C weekday + largest conference, 318 guests):** forecast 787 kVA at 14:00 (vs 677 without the conference), 90% bound 916, level STACKING WATCH with the shift plan. It does **not** forecast >1,000 kVA: real days ≥39 °C with ≥250-guest events peaked at 685–1,032 kVA (8 days; the one over 1,000 was a stacking day). So T7's "warns >1,000 kVA risk" is met only as a stacking risk, not as a forecast.
+- [x] **Post-hoc demand and EV rules (GGN)** — `src/demand_ev_rules.py`, `notebooks/08_demand_ev_rules.ipynb`; alerts in `data/clean/alerts_demand_ev.parquet`. **Added after the detector freeze and after the held-out gaps were seen, so not a clean held-out result; `src/detector.py` and `alerts.parquet` are unchanged.** No label sets either rule:
+  - `DEMAND_NEAR_CONTRACT`: 15-min kVA demand above the guide's 920 kVA (BREACH above 1,000); fires on exactly 3 days in the year (12 May, 18 Jun, 25 Jun), ~15 min after the crossing. Reactive; prevention is the day-ahead forecast's job. ₹ = excess-demand charge if the peak stands as the month's MD (penalty-on-top is still open, §21 item 2).
+  - `EV_CHARGER_NIGHT_ON`: EV sub-meter above 1 kW between 01:00 and 05:00; the pre-April data show exactly 0 kW in those hours every night. 2 episodes (20–27 May, 4–7 Jun), Low severity.
+  - Check vs the key (diagnostic): 5 alerts, 5 matching labels, 0 alerts outside them over the full year. Three demand events and two EV episodes cannot validate a rule.
+- **Time to detect definition (answered, Q15):** measured from when the fault first shows in the data. `evaluation.onset_ttd` / `score_heldout_onset` (scorer added after the freeze, detector untouched): held-out median 1.0 h (max 1.0 h) over 13 scored of 16 High labels; the 3 unscored have no rule for their type (the demand-breach labels, until the post-hoc rule above). Tuning: 7 of 12 scored, 5 pre-alerted, median 1.0 h. Label start → first alert stays as a secondary figure (median 3.0 h). Caveat: onset uses the detector's own raw rule flags, so 1 h is close to the floor by construction.
+- [ ] Bill reconciliation view, savings (IPMVP C), assistant, UI at public URL.
+- [~] Problem-owner answers — demand charge and CH-2 answered; time-to-detect definition answered (Q15); the other six discovery items are informally confirmed defaults awaiting sign-off (§21). Still need two engineers to rate 20 alerts.
+- **Deadline:** MVP online by **12 Nov** (Check-in 2); final auction 18 Nov (§22).
 
 ### Forward plan (ordered; each step lists the acceptance tests it unlocks)
-1. [ ] **Baseline model per hotel** — hourly, features: CDH, humidity, rooms sold, event guests/timing, hour × day-type. Exclude `exclude_from_model` and DG hours. Validate on held-out months (CV(RMSE) <30% hourly / <15% monthly, NMBE ±5%). Event features are required so winter weddings are explained. *Unlocks T2, T5 (exclusion), T9.*
-2. [ ] **Waste-type list** with evidence from the tuning window only (anomalies starting before 1 Apr 2026): staging, hand-mode AHUs after events, PF drop, setpoint, pool pumps, meter fault. Each gets a signature, a ₹ formula and a recommended action.
-3. [ ] **Context-aware detector** — residual vs baseline, with weather/occupancy/event context suppressing explained deviations; separate meter-fault detector (billed columns flat while `kw_avg`/sub-meters live). Report precision/recall/lead time on anomalies from 1 Apr 2026 only. *T1, T3, T4, T5, T6, T8.*
+1. [x] **Baseline model per hotel** (done, see progress log above; original spec follows) — hourly, features: CDH, humidity, rooms sold, event guests/timing, hour × day-type. Exclude `exclude_from_model` and DG hours. Validate on held-out months (CV(RMSE) <30% hourly / <15% monthly, NMBE ±5%). Event features are required so winter weddings are explained. *Unlocks T2, T5 (exclusion), T9.*
+2. [x] **Waste-type list** (done; notebook 04)  <!-- original spec: -->
+2a. (spec) **Waste-type list** with evidence from the tuning window only (anomalies starting before 1 Apr 2026): staging, hand-mode AHUs after events, PF drop, setpoint, pool pumps, meter fault. Each gets a signature, a ₹ formula and a recommended action.
+3. [x] **Context-aware detector** (done; notebook 05 — time-to-detect met under the owner's onset definition, see progress log; original spec follows) — residual vs baseline, with weather/occupancy/event context suppressing explained deviations; separate meter-fault detector (billed columns flat while `kw_avg`/sub-meters live). Report precision/recall/lead time on anomalies from 1 Apr 2026 only. *T1, T3, T4, T5, T6, T8.*
 4. [ ] **Costed alerts** — evidence, ₹/h and ₹/day, named equipment, action; alert ≤2 h after event end for T1; no alert for T2. Respect comfort/safety limits (§9) and CHW ≥ 6.5 °C.
-5. [ ] **Peak/load forecast** — next-day kVA risk vs 1,000 kVA, flexible-load shift recommendations. *T7.*
+5. [x] **Peak/load forecast** (done; notebook 07 — ±5% met on average only; breach days are load stacking; original spec follows) — next-day kVA risk vs 1,000 kVA, flexible-load shift recommendations. *T7.*
 6. [ ] **Bill reconciliation** — rebuild bills from meter data per hotel ToD windows; resolve the demand-charge formula (§21); decompose Apr→May GGN bill into weather, occupancy, events, penalty, anomalies. Bills stay untouched. *T9.*
 7. [ ] **Savings (IPMVP Option C)** — adjusted baseline only; faults never counted as savings.
 8. [ ] **Assistant** — LLM text restricted to model-produced numbers; refuses auto control of kitchen exhaust, room thermostats, life-safety, lifts; simulated automation needs override + audit log. *T10.*
@@ -197,7 +232,7 @@ Stage 1 ("understand and scope") is partly complete. The environment, data audit
 ## 20. EDA findings (all reproduced from cleaned data)
 **Reconciles with the brief:** kWh per occupied room-night 73.3 / 54.1 / 61.6 (GGN/JAI/GOA); annual cost ₹3.70 / 2.14 / 1.56 crore (₹7.40 cr); Gurugram HVAC share May–Aug 49.8%; peak-window kVAh share GGN 18.3%, JAI 26.8%; Gurugram hourly MD matches bills to ≤0.5 kVA.
 
-**Tariff windows differ per hotel** (tariffs sheet): GGN peak 18–22 +₹1.00 / off-peak 23–05 −₹0.75; JAI peak 17–23 +₹1.125 / off-peak 23–05 −₹0.75; GOA peak 18–22 +₹0.75 / off-peak 22–06 −₹0.50. Energy rates GGN 7.10, JAI 7.50, GOA 5.80 ₹/kVAh; demand charge 290/300/250 ₹/kVA; excess penalty 580/600/500; FSA 0.47/0.40/0.30; duty 0.10/0.40/0.15; DG ₹27.56/kWh. The tariff sheet says billing demand = max(recorded MD, 75% of CD) while the guide's worked example uses min(MD, CD) — check which when rebuilding bills.
+**Tariff windows differ per hotel** (tariffs sheet): GGN peak 18–22 +₹1.00 / off-peak 23–05 −₹0.75; JAI peak 17–23 +₹1.125 / off-peak 23–05 −₹0.75; GOA peak 18–22 +₹0.75 / off-peak 22–06 −₹0.50. Energy rates GGN 7.10, JAI 7.50, GOA 5.80 ₹/kVAh; demand charge 290/300/250 ₹/kVA; excess penalty 580/600/500; FSA 0.47/0.40/0.30; duty 0.10/0.40/0.15; DG ₹27.56/kWh. The tariff sheet says billing demand = max(recorded MD, 75% of CD) while the guide's worked example uses min(MD, CD). **Resolved: the owner confirmed bills follow min(MD, CD)** (§21 item 2); still verify against every month when rebuilding bills.
 
 **Energy:** cooling is the seasonal swing — GGN chillers 11% of load in winter vs 29% in summer; JAI 20% → 33%; Goa flat 26–29% (humid all year). Winter adds GGN re-heat 3.6%, pool 5.9%, water heating 8%. Kitchen 12–14%, lighting 8–10%, rooms 8–9%; unmetered "other" 8–14%. Night base load (01–05): GGN 330 kW, JAI 187, GOA 181; evening/base ratio 1.4–1.6.
 
@@ -205,12 +240,105 @@ Stage 1 ("understand and scope") is partly complete. The environment, data audit
 
 **Drivers:** daily kWh vs CDH + rooms sold + event guests + weekend + humidity gives R² 0.72 / 0.66 / 0.75 (GGN/JAI/GOA). Best CDH base: GGN 26 °C, JAI 16 °C, GOA 14 °C (humidity matters most in Goa). Events: a >300-guest event adds ≈ +112 kW to the GGN 18–22 mean (≈ +20%), ≈ +90 kW in JAI and GOA; ≤150 guests ≈ nothing in GGN. The baseline must include event guests/timing (T2).
 
-**Chiller plant (GGN):** one chiller ≈ 0.60–0.68 kW/TR; two running below ~130 TR ≈ 1.2–1.6 kW/TR (484 h) — the staging-waste signature. CH-2 sub-meter is 0 kWh all year even though the register lists a 300 TR CH-2: CH-1 + CH-3 carry the load (ask the problem owner). CHW setpoint is 5.5 °C for 1,912 h (vs 7.0 for 6,848 h): median 0.72 vs 0.66 kW/TR.
+**Chiller plant (GGN):** one chiller ≈ 0.60–0.68 kW/TR; two running below ~130 TR ≈ 1.2–1.6 kW/TR (484 h) — the staging-waste signature. CH-2 sub-meter is 0 kWh all year even though the register lists a 300 TR CH-2: CH-1 + CH-3 carry the load (owner confirmed: CH-2 is completely unavailable). CHW setpoint is 5.5 °C for 1,912 h (vs 7.0 for 6,848 h): median 0.72 vs 0.66 kW/TR.
+
+**First-pass waste sizing (GGN; our own EDA estimates, unvalidated, no anomaly labels used):** valued at GGN's average all-in ₹8.84/kWh (total grid bill ÷ grid kWh).
+- *Staging:* 557 h with two chillers (CH-1 + CH-3); 481 of them below 130 TR, median 1.34 kW/TR, mostly overnight. Excess vs 0.65 kW/TR ≈ 32,770 kWh ≈ **₹2.9 L (0.8% of GGN bill)**. Single chiller runs 0.60–0.68 kW/TR in ~89% of its hours.
+- *Setpoint:* 1,912 h at 5.5 °C vs 6,848 h at 7.0 °C; at the same load band 5–13% worse kW/TR, ≈ 54,927 kWh in single-chiller hours ≈ **₹4.9 L (1.3% of GGN)**.
+- Together ≈ ₹7.8 L ≈ 1.0% of the ₹7.40 cr group bill. The 8–12% target (₹59–89 L/yr) is far above what is sized so far; scheduling, demand and PF savings are not yet sized.
+- *Unexplained band:* a second cluster near 1.05 kW/TR (CH-1 alone at 130–280 TR, ~900 h, mostly Jun–Jul) is not understood — do **not** call it waste until explained.
+- *Hand-mode AHUs:* not sizeable from the log (it records entry to hand mode, never the return).
+- ₹21.6 L (2.9%) is the brief's figure for all 107 labelled waste events, not one cause.
+
+**BMS alarm baseline (recomputed from `bms_alarm_log`, no labels needed):** 66% closed with no action = 720 acknowledged-no-action + 254 "normal for event" + 228 "normal for weather" = 1,202 / 1,829 (65.7%); median alarm→action 8.3 h over the 627 alarms that had an action. The 26% precision / 40% recall are the brief's figures; recomputing them needs the labels, so we do that only on the 1 Apr 2026+ split.
+
+**Bill mix:** energy charge share GGN 82% / JAI 79% / GOA 81% (80.7% overall); demand 8/9/9%; ToD nets <2%. GGN penalty ₹88,218 = May ₹49,880 + Jun ₹38,338. GGN sub-metered share May–Jun vs Dec–Feb: chillers 29%→11%, pumps/towers 10%→7%, AHUs 12%→14%, kitchen 12%→14%, winter heating (re-heat + pool + water heating) 6%→18%.
 
 **Peak demand (GGN):** >900 kVA on only 6 days, all May–June, hot afternoons (12:00–16:00, 39–44 °C); max 1,086 kVA on 12 May. 33 intervals >920 kVA (EV-throttle threshold), 12 in May and 21 in June; 12 intervals >1,000. Evening events raise load but don't reach CD alone. 61% of EV kWh falls in the 18–22 peak window; laundry ~2%; water heating ~14%.
 
 ## 21. Open questions / things to raise with the problem owner
-- CH-2 shows zero energy all year — labelling quirk or genuinely unused chiller (affects the staging rule "never run two large chillers below 35% load")?
-- Demand-charge formula: tariff sheet says max(MD, 75% CD), guide example uses min(MD, CD).
-- Event end times past midnight are unknown (167 events).
-- How to treat meter-fault hours in the bill reconciliation (bills include the corrupted readings).
+Ranked by how much the answer changes the build. Each entry gives the question, why it matters, and the default I proceed with if unanswered.
+
+**Status (Check-in 1 deck, slide 8):** the eight discovery-call questions now have answers we build on. Only item 2 (demand charge) was answered directly by the owner; the rest are the written defaults below, *informally confirmed* and to be restated at the discovery call for sign-off — do not treat them as formally signed. Items 3, 4, 6, 8, 11, 13 also stand on their defaults. Per-item status is marked **[answered]** / **[default, informally confirmed]** / **[default]**.
+
+| Item | Status | Answer we build on |
+|---|---|---|
+| 2 Demand charge | **answered** | Bills follow `min(MD, CD)`. Sub-questions unanswered: whether the excess-demand penalty sits on top, and whether the 75% floor applies in every hotel — follow the worked example |
+| 1 CH-2 | **answered** | Completely unavailable (zero reading is real); chiller waste findings stand; say so in evidence |
+| 5 Scoring weights | default, informally confirmed | Balanced; baseline and detector first |
+| 14 Hotels | default, informally confirmed | All three, one pipeline; Gurugram deepest |
+| 9 Limits | default, informally confirmed | Safety hard; comfort hard if occupied |
+| 10 Alerts | default, informally confirmed | Rank by ₹, show confidence, cap daily |
+| 7 Savings baseline | default, informally confirmed | Earliest pre-change months, adjusted only |
+| 12 Deployment | default, informally confirmed | Free hosting, no login, recorded demo |
+
+**Data / domain**
+1. **CH-2 chiller.** The CH-2 sub-meter reads 0 kWh all year, yet the register lists a 300 TR CH-2; CH-1 + CH-3 carry the load.
+   - *Why it matters:* decides whether the staging rule "never run two large chillers below ~35% combined load" applies at GGN, and which chiller combinations the waste-type list can flag.
+   - *Answer (owner):* CH-2 is completely unavailable. Staging analysis uses CH-1 and CH-3 only; the chiller waste findings are not at risk from a mis-metered CH-2.
+2. **Demand-charge formula.** The tariff sheet says max(MD, 75% CD); the guide's worked example (§10) uses min(MD, CD) × ₹290 with a 75%-of-CD floor.
+   - *Why it matters:* changes every demand-cost figure in the bill reconciliation and the value of peak-shaving (EV throttling at 920 kVA).
+   - *Default:* follow the worked example, since it reproduces the May total of ₹35,24,186; flag the discrepancy in the UI.
+   - **ANSWERED:** bills follow `min(MD, CD)`. Still open: is the excess-demand penalty charged on top, and does the 75% floor apply in every hotel? Both follow the worked example for now.
+3. **Event end times past midnight.** 167 events have no known end time after midnight (`ends_after_midnight`).
+   - *Why it matters:* the baseline needs event timing (T2), and banquet AHU schedules stop 1 h after event end.
+   - *Default:* assume a typical duration per event type and mark the tail hours as uncertain; do not raise alerts on them.
+4. **Meter-fault hours in bill reconciliation.** The GGN Jan/Jul/Aug bills contain the corrupted readings.
+   - *Why it matters:* the corrected consumption and the billed figure will differ; the system must say which is which.
+   - *Default:* reconcile against the billed values, report the gap versus corrected consumption as a possible billing dispute, never "fix" the bill, and never count it as savings.
+
+**Scoring and evaluation**
+5. **Scoring weights.** What carries the most weight: forecast accuracy (CV(RMSE)/NMBE), detection precision/recall, explanation quality, or the UI?
+   - *Why it matters:* sets where effort goes.
+   - *Default:* balanced; accuracy and detection first, since the other parts depend on them.
+6. **Label split.** Is the 1 Apr 2026 tune/report cutoff the one the graders use? Is a single held-out window enough, or should I also report a rolling backtest?
+   - *Why it matters:* avoids label leakage and makes the reported numbers comparable with the graders'.
+   - *Default:* tune on anomalies starting before 1 Apr 2026, report on those from 1 Apr 2026, plus a rolling-origin backtest for the baseline only.
+7. **Savings baseline.** For IPMVP Option C, which months form the reporting period, and is a baseline built from Oct 2025 onward acceptable when no full 12-month baseline year exists?
+   - *Why it matters:* savings may only be claimed against an adjusted baseline.
+   - *Default:* baseline = earliest months before any intervention; report savings only for the period after, with the adjustment variables listed.
+8. **Tariffs.** May the supplied tariffs be treated as given (ToD windows, Goa July 2026 provisional bill)? How should they be caveated in the UI?
+   - *Why it matters:* CLAUDE.md forbids claiming the tariffs are real.
+   - *Default:* use them as given, with an "illustrative tariff" note, and mark provisional bills `is_provisional`.
+
+**Product behaviour**
+9. **Do the §9 comfort/safety limits bind recommendations or only automation?** The brief states the limits (guest rooms 22–25 °C, CHW never <6.5 °C, hot water ≥60 °C daily, pool filtration ≥8 h/day, kitchen exhaust, fresh air per NBC, life-safety never controlled) and an automation table, but never says whether a *recommendation* may go outside a limit.
+   - *Readings:* (a) hard bound on every recommendation; (b) bound on automation only, so recommendations are labelled; (c) split by type, with safety/regulatory limits always hard and comfort limits soft.
+   - *Edge cases to settle:* whether the 22–25 °C band applies to unsold rooms (the brief only allows PMS setback for them); whether 6.5 °C itself is allowed or is an edge; whether the 60 °C hot-water setpoint can be touched or only the daily cycle must not be skipped; whether moving the pool's 8 h filtration off-peak is allowed; whether to alert on comfort breaches caused by heatwaves.
+   - *Why it matters:* needs a constraint layer in front of the recommender; T10 already requires refusing kitchen exhaust, thermostats and life-safety, and the UI needs "within limits / near limit" wording.
+   - *Default:* reading (c). Safety and regulatory limits (Legionella, fresh air, pool filtration, kitchen exhaust, life-safety, the 6.5 °C CHW floor) are always hard. Comfort limits are hard for occupied rooms and soft for unsold rooms. Anything outside a limit is refused, not shown with a warning.
+10. **Alert policy.** What alert volume per day per hotel is acceptable? Rank by ₹ impact or by confidence?
+    - *Why it matters:* controls alert fatigue and the threshold of the detector.
+    - *Default:* rank by ₹ impact, show confidence beside it, and cap the daily alerts per hotel.
+11. **LLM use.** Is a deployed LLM expected for explanations? If so, which model and what latency/cost budget?
+    - *Why it matters:* the LLM may only state facts present in the data, and all numbers come from the models.
+    - *Default:* template-based explanations with optional LLM phrasing over verified numbers, so the product works without an LLM.
+
+**Delivery**
+12. **Deployment.** What counts as a "public URL" (hosting platform, auth, data-residency limits)? Is the UI judged live or from a recording?
+    - *Default:* free-tier hosting with no login, plus a recorded demo as a fallback.
+13. **Out-of-period behaviour.** Data ends Sep 2026 but the date is now past that. Should the system be demonstrated as streaming/replay or as a batch report over the full year?
+    - *Default:* replay mode over the year with a date selector, so alerts appear as of the selected time.
+
+**Scope**
+14. **Which hotels to demonstrate.** Are we expected to show the solution across all three hotels, or is one successful end-to-end hotel enough?
+    - *Why it matters:* decides whether the MVP is built deep on Gurugram (largest cost, HVAC and demand-penalty story, tests T1, T2, T4–T7, T9) or wide across all three (T3 is Jaipur, T8 is Goa).
+    - *Default:* all three hotels run through the same pipeline; Gurugram gets the deepest treatment.
+
+**Discovery-call shortlist (the 8 items in the table above):** 2, 1, 5, 14, 9, 10, 7, 12. The rest (3, 4, 6, 8, 11, 13) are defaults we state and move on from. Asks of the owner at the call: sign-off on these answers, and **two engineers (or students) to rate 20 alerts** — that is how the engineer-trust metric (≥4/5) is measured.
+
+## 22. Schedule, scope and team (Check-in 1 deck)
+**Team 12:** Justin Sharon, Ananya Shukla, Varnika Ashi, Manish Manoj Nair.
+
+**Schedule:** 3 Nov discovery call with Apurav · 4 Nov Check-in 1 (problem breakdown) · **12 Nov Check-in 2: MVP, online** · 16 Nov Check-in 3: internal auction · **18 Nov final auction (leaders bid)**. The deck says the discovery call falls between 4 and 7 Nov.
+
+**Committed for 18 Nov:** baseline per hotel with CV(RMSE)/NMBE; context-aware detector with meter faults suppressed; costed alerts (cause, evidence, action); bill reconciliation; public-URL interface.
+**If time allows:** day-ahead peak-kVA forecast; flexible loads moved off the peak window; IPMVP savings view; "why was this bill high?" assistant.
+**Not planned:** control simulation, portfolio benchmarking, auto monthly report (the brief's stretch items). **Out of scope:** controlling real equipment or a live BMS, guest-room thermostats, fire/life-safety/lifts, new chillers/solar/real tariffs.
+Note: the committed list does not include the forecast (T7), savings (Option C) or assistant (T10) — those are "if time allows", so the forward plan in §18 should be cut to match the deadline: steps 1–4, 6 and 9 first, then 5, 7, 8.
+
+**Modelling approach stated in the deck:** each season appears once in 8,760 hourly rows per hotel, so use regularised linear and shallow boosted models, validated by **rolling-origin blocks of months** (not random folds), on months the model has not seen (ASHRAE G14).
+
+**Risks and containment (deck slide 7):** normal extremes look like waste → baseline carries heat, rooms, events; meter faults read as waste → flag, exclude, rebuild from kW, never edit a bill (show billed and corrected side by side); label leakage → tune before 1 Apr, report from 1 Apr; one year of data → simple models, blocked validation; small waste on a large load (e.g. 6 kW on a 600 kW site) → work at sub-meter level and state the detection floor; unsafe or invented advice → constraint layer, numbers only from models.
+
+**Metric targets and how each is measured:** precision ≥70% (match to labels from 1 Apr); recall ≥75% of High+Medium; time to detect <2 h for High (anomaly start → first alert); CV(RMSE) <15% monthly / <30% hourly, NMBE ±5%; peak forecast within ±5% of next-day max kVA; savings 8–12% (₹59–89 L/yr) as adjusted baseline − actual; engineer trust ≥4/5 from 2 engineers rating 20 alerts.

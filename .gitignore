@@ -5,3 +5,7 @@ __pycache__/
 *.xlsx
 *.xls
 .ipynb_checkpoints/
+
+.streamlit/secrets.toml
+*.pdf
+~$*

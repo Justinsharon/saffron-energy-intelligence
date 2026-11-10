@@ -12,12 +12,28 @@ The product **recommends and never controls equipment**. All data is synthetic a
 |---|---|
 | Environment, data audit, cleaning | Done |
 | Hourly feature table, EDA | Done |
-| Per-hotel baseline models (CV(RMSE) / NMBE on held-out months) | Next |
-| Anomaly detector, costed alerts, fault suppression | Not started |
-| Bill reconciliation, peak forecast, IPMVP Option C savings | Not started |
-| Engineer-facing UI at a public URL | Not started |
+| Per-hotel baseline (CV(RMSE) 8.3 / 5.0 / 5.4 % hourly, NMBE ±0.1 %) | Done |
+| Context-aware detector + meter-fault stream (held-out precision 98 %, recall 96 %, TTD 1.0 h) | Done |
+| Costed alert cards (evidence, ₹/h, ₹/day, cause, action, guardrail) | Done |
+| Bill reconciliation (36 bills rebuilt line by line; fault months billed vs corrected; provisional Goa bill) | Done |
+| Bill-change explanation (T9: weather / occupancy / events / anomalies / demand / diesel) | Done |
+| Gurugram day-ahead peak forecast + stacking watch + shift plan (T7) | Done |
+| Savings plan (energy / ToD / demand) + IPMVP Option C statistics | Done |
+| Assistant (Claude + tools, guardrails, number check; rules fallback) | Done |
+| Streamlit app (`app.py`) | Done — deploy on Streamlit Community Cloud |
 
 The detailed progress log, acceptance tests (T1–T10), data schemas and findings are in [CONTEXT.md](CONTEXT.md).
+
+## Run the app
+
+```bash
+uv sync
+uv run python src/build_app_data.py      # precompute data/app/*.parquet (already committed)
+uv run streamlit run app.py
+```
+
+Claude answers in the Assistant need `ANTHROPIC_API_KEY` in `.streamlit/secrets.toml` (or the Streamlit Cloud secrets box). Without it the
+assistant uses the built-in rules engine with the same tools.
 
 ## Repository layout
 
@@ -25,8 +41,15 @@ The detailed progress log, acceptance tests (T1–T10), data schemas and finding
 |---|---|
 | `src/clean_data.py` | Cleaning rules: raw workbooks to `data/clean/*.parquet` |
 | `src/features.py` | Hourly Gurugram table, unified hourly table for all hotels, cooling degree hours |
+| `src/baseline.py`, `detector.py`, `waste_types.py`, `evaluation.py` | Baseline, detector, waste catalogue, scoring |
+| `src/forecast.py`, `demand_ev_rules.py` | Day-ahead kVA forecast; post-hoc demand / EV rules |
+| `src/bills.py`, `attribution.py` | Bill reconciliation; bill-change attribution (T9) |
+| `src/alert_cards.py`, `savings.py`, `assistant.py` | Alert presentation, savings plan + Option C, assistant |
+| `app.py`, `src/build_app_data.py`, `data/app/` | Web app and its precomputed inputs |
 | `data/clean/` | Cleaned parquet tables (generated; rebuild rather than edit) |
-| `notebooks/` | `01_data_cleanliness`, `02_eda`: `.py` sources and executed `.ipynb` |
+| `src/baseline.py`, `detector.py`, `evaluation.py`, `waste_types.py` | Baseline model, rule + residual detector, scoring with the tune/report split, waste-type catalogue |
+| `src/forecast.py`, `demand_ev_rules.py` | Day-ahead kVA forecast and stacking watch; post-hoc demand and EV-charger rules |
+| `notebooks/` | `01`–`08`: data cleanliness, EDA, baseline, waste types, detector, held-out diagnostics, forecast, demand/EV rules (`.py` sources and executed `.ipynb`) |
 | `tools/build_notebook.py` | Compiles a `# %%` percent-format script into an executed notebook |
 | `docs/modelling_approach.md` | Modelling approach |
 | `CONTEXT.md` | Full brief, requirements, schemas, findings, progress log |
