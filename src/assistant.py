@@ -134,8 +134,8 @@ def _schemas():
 
 
 SYSTEM = """You are the energy assistant for Saffron Suites (fictional hotels: Gurugram, Jaipur, Goa; data Oct 2025 - Sep 2026; tariffs are illustrative).
-Users are duty engineers, the chief engineer, the GM and finance. Answer using ONLY numbers returned by the tools - never compute, round differently, estimate
-or invent numbers; quote them as given (you may format with ₹ and thousands separators, or express ₹ lakh only if a tool gave that value).
+Users are duty engineers, the chief engineer, the GM and finance. Answer using ONLY numbers returned by the tools - never compute, add up, subtract, total, round differently,
+estimate or invent numbers (a sum of several drivers is NOT allowed unless a tool returned it); quote them as given (you may format with ₹ and thousands separators, or express ₹ lakh only if a tool gave that value).
 If the tools do not cover the question, say what the product can show instead. Be brief: lead with the answer, then 3-6 bullet points with the ₹ drivers.
 You only recommend; a person approves every action. Never suggest automatic control of kitchen exhaust, guest-room thermostats, lifts or life-safety,
 and never a chilled-water setpoint below 6.5 °C. "Last month" etc. refers to the data period; the latest month is 2026-09."""
@@ -144,7 +144,7 @@ and never a chilled-water setpoint below 6.5 °C. "Last month" etc. refers to th
 # ---- 3. number check ----------------------------------------------------------------------------------------
 def _numbers(text: str) -> list[float]:
     out = []
-    for m in re.finditer(r"(?<![A-Za-z0-9-])(\d[\d,]*\.?\d*)\s*(lakh|l\b|cr|crore)?", text, flags=re.I):
+    for m in re.finditer(r"(?<![A-Za-z0-9])(\d[\d,]*\.?\d*)\s*(lakh|l\b|cr|crore)?", text, flags=re.I):
         s = m.group(1).replace(",", "").rstrip(".")
         if not s:
             continue
@@ -246,6 +246,13 @@ def answer(q: str, history: list | None = None, api_key: str | None = None) -> d
     text = "".join(b.text for b in resp.content if b.type == "text").strip()
     facts = json.dumps([c[2] for c in calls], default=str)
     bad = check_numbers(text, facts, q)
+    if bad:                     # one repair round: the model rewrites using only tool numbers
+        msgs += [{"role": "assistant", "content": resp.content},
+                 {"role": "user", "content": f"Rewrite your answer. These numbers do not appear in the tool results: {bad[:8]}. Do not add, subtract, "
+                                             "total or convert numbers yourself; quote only figures exactly as the tools returned them."}]
+        resp = client.messages.create(model=MODEL, max_tokens=1200, system=SYSTEM, messages=msgs, tools=_schemas())
+        text = "".join(b.text for b in resp.content if b.type == "text").strip()
+        bad = check_numbers(text, facts, q)
     if bad:
         fb = _fallback_text(calls) if calls else "I could not verify the figures for that answer."
         return dict(text=fb, mode=f"verified fallback (model text had unverified numbers: {bad[:5]})", calls=calls, unverified=bad)
