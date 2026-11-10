@@ -135,17 +135,18 @@ def page_overview():
     yr = b.total_energy_cost_inr.sum()
     k = st.columns(4)
     k[0].metric("Open alerts now", len(open_), help="Alerts raised before the replay time whose episode is still running")
-    k[1].metric("₹/day at stake (open)", inr(open_.inr_per_day.sum()))
+    k[1].metric("₹/day at stake (open)", inr(open_[open_.cost_basis == "per_day"].inr_per_day.sum()),
+                help="Continuing conditions only; one-off events (laundry batch, demand peak) are counted per occurrence")
     k[2].metric("Waste flagged to date", inr(seen.cost_inr.sum()), help="Sum of ₹ over alerts raised so far in the data year")
     k[3].metric("Group energy cost (year)", inr(yr))
 
     st.subheader("Open now")
     if open_.empty:
         st.success("No open alerts at this time.")
-    for r in open_.sort_values("inr_per_day", ascending=False).itertuples():
+    for r in open_[open_.channel == "Alert"].sort_values("cost_inr", ascending=False).itertuples():
         with st.container(border=True):
             st.markdown(f"{sev_badge(r.severity)} &nbsp; **{r.hotel} · {r.title}** — since {r.start:%d %b %H:%M} "
-                        f"({(NOW - r.start).total_seconds() / 3600:.0f} h) · **{inr(r.inr_per_day)}/day**", unsafe_allow_html=True)
+                        f"({(NOW - r.start).total_seconds() / 3600:.0f} h) · **" + (f"{inr(r.inr_per_day)}/day" if r.cost_basis == "per_day" else f"{inr(r.cost_inr)} one-off") + "**", unsafe_allow_html=True)
             st.caption(r.evidence)
             st.markdown(f"**Action:** {r.action}")
 
@@ -204,7 +205,9 @@ def page_alerts():
     sev = f2.multiselect("Severity", ["High", "Medium", "Low"], default=["High", "Medium", "Low"])
     scope = f3.selectbox("Show", ["Raised up to replay time", "Open at replay time", "Whole year"])
     sort = f4.selectbox("Sort by", ["₹ impact", "Newest"])
-    x = c[c.site.isin(site) & c.severity.isin(sev)]
+    chan = st.multiselect("Channel", ["Alert", "Daily digest"], default=["Alert", "Daily digest"],
+                          help="Small or schedule-only items (laundry in peak, EV charger, < ₹500) go to a daily digest instead of the duty engineer")
+    x = c[c.site.isin(site) & c.severity.isin(sev) & c.channel.isin(chan)]
     if scope != "Whole year":
         x = x[x.alert_time <= NOW]
     if scope == "Open at replay time":
@@ -233,11 +236,17 @@ def page_alerts():
             m = st.columns(4)
             m[0].metric("Since", f"{r.start:%d %b, %H:%M}")
             m[1].metric("Running for" if live else "Duration", f"{r.duration_h:.0f} h" + (" (ongoing)" if live else ""))
-            m[2].metric("₹ / hour", inr(r.inr_per_hour) if r.cost_inr else "—")
-            m[3].metric("₹ / day", inr(r.inr_per_day) if r.cost_inr else "—")
+            if r.cost_basis == "per_occurrence":
+                m[2].metric("₹ this occurrence", inr(r.cost_inr) if r.cost_inr else "—")
+                m[3].metric("Channel", r.channel)
+            else:
+                m[2].metric("₹ / hour", inr(r.inr_per_hour) if r.cost_inr else "—")
+                m[3].metric("₹ / day while it continues", inr(r.inr_per_day) if r.cost_inr else "—")
             st.caption(f"Raised {r.alert_time:%d %b %H:%M} ({r.detect_lag_h:.1f} h after the signature started) · {'cost so far' if live else 'episode total'} {inr(r.cost_inr)}"
                        + (f" · {r.cost_note}" if r.cost_note else ""))
-            st.markdown(f"**Evidence.** {r.evidence}")
+            if r.repeat_30d:
+                st.warning(f"Repeat: {r.repeat_30d + 1} alerts of this type at {r.hotel} in 30 days — escalate to the chief engineer.")
+            st.markdown(f"**Evidence.** {r.evidence}" + (f" _{r.inferred_note}_" if r.inferred_note else ""))
             st.markdown(f"**Where.** {r.equipment}")
             st.markdown(f"**Likely cause.** {r.cause}")
             st.markdown(f"**Recommended action.** {r.action}")
@@ -512,8 +521,17 @@ def page_rate():
         role = c2.selectbox("Role", ["Duty / shift engineer", "Chief engineer", "Facilities / energy manager", "Finance", "Student reviewer", "Other"])
         if not rater:
             st.info("Enter your name to start.")
-            return
-        mine = set(done.loc[done.rater.astype(str).str.lower() == rater.lower(), "alert_id"])
+        else:
+            _rate_body(rs, done, rater, role)
+    with t2:
+        _rate_results(rs, done)
+
+
+def _rate_body(rs, done, rater, role):
+    import feedback as FB
+    if True:
+        rnd = FB.rounds(done)
+        mine = set(done.loc[(done.rater.astype(str).str.lower() == rater.lower()) & (rnd == FB.ROUND), "alert_id"])
         st.progress(len(mine & set(rs.alert_id)) / len(rs), text=f"{len(mine & set(rs.alert_id))} of {len(rs)} rated")
         todo = [i for i, a in enumerate(rs.alert_id) if a not in mine]
         default = todo[0] if todo else 0
@@ -541,17 +559,25 @@ def page_rate():
                     st.rerun()
                 except Exception as e:
                     st.error(f"Rating not saved ({type(e).__name__}: {e}).")
-    with t2:
+
+
+def _rate_results(rs, done):
+    import feedback as FB
+    if True:
         sm = FB.summary(done)
         if not sm["n"]:
             st.info("No ratings yet.")
             return
+        st.caption(f"Headline figures use the latest card version (round {sm['round']}). Earlier rounds rated older card wording.")
         k = st.columns(4)
         k[0].metric("Mean usefulness", f"{sm['mean']:.2f} / 5", delta=f"{sm['mean'] - 4:+.2f} vs target 4.0")
         k[1].metric("Ratings", sm["n"])
         k[2].metric("Would act", f"{sm['would_act']:.0f}%")
         k[3].metric("Cause plausible", f"{sm['cause_right']:.0f}%")
         st.dataframe(sm["raters"].round(2), width="stretch")
+        if len(sm["by_round"]) > 1:
+            st.markdown("**By card version**")
+            st.dataframe(sm["by_round"].round(2), width="stretch")
         pa = sm["per_alert"].rename("mean usefulness").reset_index().merge(rs[["alert_id", "hotel", "title"]], on="alert_id")
         st.dataframe(pa.sort_values("mean usefulness").round(2), hide_index=True, width="stretch")
         st.download_button("Download all ratings (CSV)", done.to_csv(index=False), "alert_ratings.csv")

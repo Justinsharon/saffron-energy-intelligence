@@ -41,6 +41,8 @@ CHART = {
     "CHILLER_PART_LOAD_INEFFICIENCY": ["chillers_kw", "chiller_load_tr", "kw_per_tr"], "CHW_SETPOINT_LOW": ["chw_setpoint_c", "chillers_kw"],
     "DEMAND_NEAR_CONTRACT": ["kva_max_in_hour"], "EV_CHARGER_NIGHT_ON": ["ev_chargers_kw"], "RESIDUAL_UNEXPLAINED": [],
 }
+ONE_OFF = {"LAUNDRY_IN_PEAK", "DEMAND_NEAR_CONTRACT"}        # a batch or a peak, not a condition that runs all day
+DIGEST = {"LAUNDRY_IN_PEAK", "EV_CHARGER_NIGHT_ON"}          # route to the daily digest, not the duty engineer's pager
 LOWER_BOUND = {"CHILLER_STAGING_LOW_LOAD", "CHW_SETPOINT_LOW", "AHU_HAND_MODE"}     # notebook 06: our ₹ is 0.4–0.8x the key's
 
 
@@ -76,15 +78,39 @@ def build_cards() -> pd.DataFrame:
     for col in ["evidence", "action", "title"]:
         c[col] = c[col].str.replace(" degC", " °C").str.replace("degC", "°C")
     c["status"] = "Open"
-    return c.sort_values("alert_time").reset_index(drop=True)
+    c = c.sort_values("alert_time").reset_index(drop=True)
+    # --- presentation fixes from the alert-rating dry run (10 Nov; detector untouched) ---
+    # 1. ₹/day only where the condition continues day after day; one-off events show ₹ per occurrence
+    c["cost_basis"] = "per_day"
+    c.loc[c.rule.isin(ONE_OFF), "cost_basis"] = "per_occurrence"
+    # 2. small or schedule-only items go to a daily digest instead of interrupting the shift
+    c["channel"] = "Alert"
+    c.loc[c.rule.isin(DIGEST) | ((c.cost_inr < 500) & (c.severity != "High")), "channel"] = "Daily digest"
+    # 3. repeats: how many alerts of the same type at the same hotel in the 30 days before this one
+    c["repeat_30d"] = [int(((c.site == r.site) & (c.rule == r.rule) & (c.alert_time < r.alert_time)
+                            & (c.alert_time >= r.alert_time - pd.Timedelta(days=30))).sum()) for r in c.itertuples()]
+    # 4. sites without a chiller-count point: the staging cause is inferred from kW/TR
+    c["inferred_note"] = ""
+    c.loc[(c.rule == "CHILLER_PART_LOAD_INEFFICIENCY"), "inferred_note"] = (
+        "This site does not meter how many chillers run; the staging cause is inferred from kW/TR at this load.")
+    return c
 
 
 def card_text(r) -> str:
     """The one-paragraph alert in the brief's format. Every number comes from the row."""
-    cost = f"~₹{r.inr_per_hour:,.0f}/h (₹{r.inr_per_day:,.0f}/day; ₹{r.cost_inr:,.0f} over the episode)" if r.cost_inr > 0 else "₹ impact not material"
+    if r.cost_inr <= 0:
+        cost = "₹ impact not material"
+    elif r.cost_basis == "per_occurrence":
+        cost = f"₹{r.cost_inr:,.0f} for this occurrence"
+    else:
+        cost = f"~₹{r.inr_per_hour:,.0f}/h (₹{r.inr_per_day:,.0f}/day while it continues; ₹{r.cost_inr:,.0f} over the episode)"
     note = f" [{r.cost_note}]" if r.cost_note else ""
-    return (f"{r.hotel} · {r.title} — since {r.start:%a %d %b %H:%M}, {r.duration_h:.0f} h. {r.evidence}. {cost}{note}. "
-            f"Likely cause: {r.cause} Action: {r.action}")
+    span = (f"{r.flagged_h:.0f} h flagged within a {r.duration_h:.0f} h episode" if r.flagged_h < r.duration_h - 0.5
+            else f"{r.duration_h:.0f} h")
+    rep = f" Repeat: {r.repeat_30d + 1}{'nd' if r.repeat_30d == 1 else 'rd' if r.repeat_30d == 2 else 'th'} time in 30 days at this hotel — escalate to the chief engineer." if r.repeat_30d else ""
+    inf = f" {r.inferred_note}" if r.inferred_note else ""
+    return (f"{r.hotel} · {r.title} — since {r.start:%a %d %b %H:%M}, {span}. {r.evidence}. {cost}{note}.{inf} "
+            f"Likely cause: {r.cause} Action: {r.action}{rep}")
 
 
 def fault_cards() -> pd.DataFrame:

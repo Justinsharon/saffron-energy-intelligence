@@ -19,7 +19,8 @@ from features import CLEAN
 APP = CLEAN.parent / "app"
 LOCAL = CLEAN.parent / "feedback" / "ratings.csv"
 GIST_FILE = "ratings.csv"
-COLUMNS = ["time", "rater", "role", "alert_id", "usefulness", "would_act", "cause_right", "comment"]
+COLUMNS = ["time", "rater", "role", "alert_id", "usefulness", "would_act", "cause_right", "comment", "round"]
+ROUND = 2          # card wording version: 1 = before the 10 Nov dry-run fixes (no "round" column saved), 2 = after
 
 
 def rating_set(n: int = 20) -> pd.DataFrame:
@@ -64,6 +65,7 @@ def load() -> pd.DataFrame:
 
 
 def save(row: dict) -> None:
+    row = {**row, "round": ROUND}
     df = pd.concat([load(), pd.DataFrame([row])[COLUMNS]], ignore_index=True)
     g = _gist()
     if g:
@@ -73,12 +75,25 @@ def save(row: dict) -> None:
         df.to_csv(LOCAL, index=False)
 
 
+def rounds(df: pd.DataFrame) -> pd.Series:
+    """Card version of each rating; rows saved before the column existed are round 1."""
+    if "round" not in df:
+        return pd.Series(1, index=df.index)
+    return pd.to_numeric(df["round"], errors="coerce").fillna(1).astype(int)
+
+
 def summary(df: pd.DataFrame) -> dict:
     if df.empty:
         return dict(n=0)
+    df = df.copy()
+    df["round"] = rounds(df)
+    by_round = (df.sort_values("time").groupby(["round", "rater", "alert_id"]).tail(1)
+                .groupby("round").agg(ratings=("usefulness", "size"), mean=("usefulness", "mean"),
+                                      would_act=("would_act", lambda s: (s == "Yes").mean() * 100)))
+    df = df[df["round"] == df["round"].max()]                                # headline = latest card version
     last = df.sort_values("time").groupby(["rater", "alert_id"]).tail(1)      # a re-rating replaces the earlier one
     by = last.groupby("rater").agg(rated=("alert_id", "nunique"), mean=("usefulness", "mean"),
                                    would_act=("would_act", lambda s: (s == "Yes").mean() * 100))
     return dict(n=len(last), raters=by, mean=float(last.usefulness.mean()),
                 would_act=float((last.would_act == "Yes").mean() * 100), cause_right=float((last.cause_right == "Yes").mean() * 100),
-                per_alert=last.groupby("alert_id").usefulness.mean())
+                per_alert=last.groupby("alert_id").usefulness.mean(), by_round=by_round, round=int(df["round"].max()))
