@@ -75,7 +75,7 @@ def tool_bill_reconciliation(site: str, month: str | None = None) -> dict:
     r = r[r.site == _site(site)]
     if month:
         r = r[r.month == month]
-    cols = ["month", "status", "billed_total", "corrected_total", "billed_minus_corrected", "md_kva", "pf", "note"]
+    cols = ["month", "status", "billed_total", "corrected_total", "billed_minus_corrected", "md_kva", "pf", "pf_source", "note"]
     return dict(hotel=SITES[_site(site)], rows=r[cols].round(3).to_dict("records"))
 
 

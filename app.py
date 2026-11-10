@@ -110,7 +110,7 @@ if "audit" not in st.session_state:
     st.session_state.audit = []          # acknowledge / snooze / rating log (session-level; download as CSV)
 
 st.sidebar.markdown("### ⚡ Saffron Suites\n**Energy Intelligence**")
-page = st.sidebar.radio("Page", ["Overview", "Alerts", "Bills", "Forecast (Gurugram)", "Savings", "Assistant", "Method & limits"],
+page = st.sidebar.radio("Page", ["Overview", "Alerts", "Bills", "Forecast (Gurugram)", "Savings", "Assistant", "Rate alerts", "Method & limits"],
                         label_visibility="collapsed")
 st.sidebar.divider()
 st.sidebar.caption("Replay clock: the data covers 1 Oct 2025 – 30 Sep 2026. Pick the moment to view the product 'as of'.")
@@ -173,10 +173,10 @@ def page_overview():
     st.caption("Held-out scores from notebooks 05/06: detector frozen before scoring labels from 1 Apr 2026. Post-hoc demand/EV rules excluded from these figures.")
 
 
-def evidence_chart(r):
+def evidence_chart(r, upto=None):
     d = frame(r.site)
     pad = pd.Timedelta(hours=max(12, min(48, r.duration_h)))
-    w = d[(d.timestamp >= r.start - pad) & (d.timestamp <= min(r.end + pad, NOW))]
+    w = d[(d.timestamp >= r.start - pad) & (d.timestamp <= min(r.end + pad, upto or NOW))]
     fig = go.Figure()
     fig.add_vrect(x0=r.start, x1=r.end, fillcolor=ACC, opacity=0.10, line_width=0, annotation_text="alert window", annotation_position="top left")
     fig.add_trace(go.Scatter(x=w.timestamp, y=w.pred_ens, name="expected (baseline)", line=dict(color=BASE, dash="dot")))
@@ -493,6 +493,70 @@ def page_assistant():
         st.session_state.chat.append(dict(role="assistant", content=r["text"], mode=r["mode"]))
 
 
+def page_rate():
+    import feedback as FB
+    st.title("Rate 20 alerts")
+    st.caption("Engineer-trust test (brief target: mean usefulness ≥ 4 / 5 from two engineers). Every rater sees the same 20 alerts, chosen by rule: "
+               "held-out period only, the largest-₹ alert of every hotel × waste type, then the next largest ₹. Judge each as if it reached you on shift.")
+    st.caption(f"Ratings are saved to: {FB.storage()}")
+    rs = FB.rating_set()
+    try:
+        done = FB.load()
+    except Exception as e:
+        st.error(f"Could not read saved ratings ({type(e).__name__}); new ratings may not save.")
+        done = pd.DataFrame(columns=FB.COLUMNS)
+    t1, t2 = st.tabs(["Rate", "Results"])
+    with t1:
+        c1, c2 = st.columns(2)
+        rater = c1.text_input("Your name", key="rater").strip()
+        role = c2.selectbox("Role", ["Duty / shift engineer", "Chief engineer", "Facilities / energy manager", "Finance", "Student reviewer", "Other"])
+        if not rater:
+            st.info("Enter your name to start.")
+            return
+        mine = set(done.loc[done.rater.astype(str).str.lower() == rater.lower(), "alert_id"])
+        st.progress(len(mine & set(rs.alert_id)) / len(rs), text=f"{len(mine & set(rs.alert_id))} of {len(rs)} rated")
+        todo = [i for i, a in enumerate(rs.alert_id) if a not in mine]
+        default = todo[0] if todo else 0
+        i = st.selectbox("Alert", range(len(rs)), index=default,
+                         format_func=lambda k: f"{k + 1:02d}. {'✓ ' if rs.alert_id[k] in mine else ''}{rs.hotel[k]} · {rs.title[k]} · {rs.start[k]:%d %b}")
+        r = rs.iloc[i]
+        with st.container(border=True):
+            st.markdown(f"{sev_badge(r.severity)} &nbsp; **{r.hotel} · {r.title}**", unsafe_allow_html=True)
+            st.markdown(r.text)
+            st.info(r.guard_text, icon="🛡️")
+            for k, f in enumerate(evidence_chart(r, upto=pd.Timestamp("2026-12-31"))):
+                st.plotly_chart(f, width="stretch", key=f"rate_{r.alert_id}_{k}")
+        with st.form(f"rate_{r.alert_id}", clear_on_submit=True):
+            u = st.radio("How useful is this alert?", [1, 2, 3, 4, 5], index=3, horizontal=True,
+                         captions=["noise", "", "", "", "would act on it now"])
+            a1, a2 = st.columns(2)
+            act = a1.radio("Would you act on it?", ["Yes", "No", "Not sure"], horizontal=True)
+            cause = a2.radio("Is the stated cause plausible?", ["Yes", "No", "Not sure"], horizontal=True)
+            note = st.text_area("What would make it more useful? (optional)")
+            if st.form_submit_button("Save rating", type="primary"):
+                try:
+                    FB.save(dict(time=pd.Timestamp.now(tz="Asia/Kolkata").strftime("%Y-%m-%d %H:%M"), rater=rater, role=role, alert_id=r.alert_id,
+                                 usefulness=u, would_act=act, cause_right=cause, comment=note))
+                    st.success("Saved. Pick the next alert above.")
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Rating not saved ({type(e).__name__}: {e}).")
+    with t2:
+        sm = FB.summary(done)
+        if not sm["n"]:
+            st.info("No ratings yet.")
+            return
+        k = st.columns(4)
+        k[0].metric("Mean usefulness", f"{sm['mean']:.2f} / 5", delta=f"{sm['mean'] - 4:+.2f} vs target 4.0")
+        k[1].metric("Ratings", sm["n"])
+        k[2].metric("Would act", f"{sm['would_act']:.0f}%")
+        k[3].metric("Cause plausible", f"{sm['cause_right']:.0f}%")
+        st.dataframe(sm["raters"].round(2), width="stretch")
+        pa = sm["per_alert"].rename("mean usefulness").reset_index().merge(rs[["alert_id", "hotel", "title"]], on="alert_id")
+        st.dataframe(pa.sort_values("mean usefulness").round(2), hide_index=True, width="stretch")
+        st.download_button("Download all ratings (CSV)", done.to_csv(index=False), "alert_ratings.csv")
+
+
 def page_method():
     st.title("Method & limits")
     st.markdown("""
@@ -523,4 +587,4 @@ Meter faults are never alerts or savings, and bills are never altered. LLM text 
 
 
 {"Overview": page_overview, "Alerts": page_alerts, "Bills": page_bills, "Forecast (Gurugram)": page_forecast, "Savings": page_savings,
- "Assistant": page_assistant, "Method & limits": page_method}[page]()
+ "Assistant": page_assistant, "Rate alerts": page_rate, "Method & limits": page_method}[page]()

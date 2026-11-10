@@ -108,7 +108,10 @@ def reconcile(site: str) -> pd.DataFrame:
         rows.append(dict(site=site, month=mo, status=status, note=note, billed_total=r.total_energy_cost_inr, tariff_check_total=chk["total_energy_cost_inr"],
                          tariff_check_max_gap=tariff_gap, meter_kvah=q_raw.grid_kvah, billed_kvah=r.grid_kvah, meter_gap_pct=meter_gap_pct,
                          corrected_total=mc["total_energy_cost_inr"], billed_minus_corrected=corr_gap, md_kva=r.recorded_md_kva,
-                         billing_demand_kva=r.billing_demand_kva, pf=r.grid_kwh / r.grid_kvah,
+                         billing_demand_kva=r.billing_demand_kva,
+                         # a provisional bill's kVAh is estimated, so its kWh/kVAh is not a real PF: use the meter's
+                         pf=(q_cor.grid_kwh / q_cor.grid_kvah) if r.is_provisional else r.grid_kwh / r.grid_kvah,
+                         pf_source="meter (bill kVAh is estimated)" if r.is_provisional else "bill",
                          **{f"bill_{k}": r[k] for k in LINES}))
     return pd.DataFrame(rows)
 
