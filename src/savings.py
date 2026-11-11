@@ -55,11 +55,11 @@ def plan() -> pd.DataFrame:
         e = c[~c.rule.isin(["LAUNDRY_IN_PEAK", "DEMAND_NEAR_CONTRACT", "POWER_FACTOR_DROP"])]
         rows.append(dict(site=s, measure="Act on detected waste alerts (staging, hand-mode AHUs, re-heat, lighting, pumps, setpoints, exhaust)",
                          category="Energy", inr=e.cost_inr.sum(), basis=f"{len(e)} alerts over the year; ₹ from the detector, staging and CHW recalibrated to metered kW/TR (hand-mode AHU is a lower bound)",
-                         safety="Each action carries its guardrail; kitchen exhaust interlock only, never auto-off", confidence="High"))
+                         safety="Each fix is approved by a person; kitchen extract fans are linked to kitchen hours, never switched off automatically", confidence="High"))
         pfa = c[c.rule == "POWER_FACTOR_DROP"]
         if len(pfa):
             rows.append(dict(site=s, measure="Keep PF ≥ 0.97: repair APFC steps within hours (PF alert)", category="Energy", inr=pfa.cost_inr.sum(),
-                             basis=f"{len(pfa)} PF-drop episodes; excess kVAh × energy+FSA+duty", safety="No comfort impact", confidence="High"))
+                             basis=f"{len(pfa)} PF-drop episodes; excess kVAh × energy+FSA+duty", safety="No effect on guests or comfort", confidence="High"))
         # 2. Flexible loads out of the peak window into off-peak
         d = _frame(s)
         h = d.timestamp.dt.hour
@@ -70,13 +70,13 @@ def plan() -> pd.DataFrame:
         rows.append(dict(site=s, measure="Shift flexible loads (" + ", ".join(x.replace("_kw", "").replace("_", " ") for x in cols) + ") from peak to off-peak window",
                          category="ToD", inr=moved / pf * spread,
                          basis=f"{moved:,.0f} kWh/yr movable (shares {', '.join(f'{k[:-3]} {v:.0%}' for k, v in SHIFT_SHARE.items() if k in cols)}) × ₹{spread:.2f}/kVAh",
-                         safety="Hot water must still reach ≥60 °C once a day (Legionella); laundry recommend-only", confidence="Medium"))
+                         safety="Hot water still reaches 60 °C once a day for hygiene; laundry timing is the laundry manager's call", confidence="Medium"))
         # 3. Demand
         b = pd.read_parquet(CLEAN / "monthly_bills.parquet").query("site == @s")
         if b.excess_demand_penalty_inr.sum() > 0:
             rows.append(dict(site=s, measure="Avoid contract-demand breaches: day-ahead stacking watch + shift plan + EV throttle above 920 kVA",
                              category="Demand", inr=b.excess_demand_penalty_inr.sum(), basis="Excess-demand penalties actually billed this year",
-                             safety="Never shed chillers, kitchen, lifts or life-safety", confidence="Medium"))
+                             safety="Chillers, kitchens, lifts and safety systems are never cut", confidence="Medium"))
         max_md = b.recorded_md_kva.max()
         new_cd = math.ceil(max_md * 1.15 / 10) * 10
         if new_cd < t["cd"]:
@@ -86,7 +86,7 @@ def plan() -> pd.DataFrame:
             rows.append(dict(site=s, measure=f"Right-size contract demand {t['cd']:,.0f} → {new_cd:,} kVA (max MD this year {max_md:,.0f} kVA, +15 % headroom)",
                              category="Demand", inr=demand_bill(t["cd"]) - demand_bill(new_cd),
                              basis=f"MD below the 75 % floor ({0.75 * t['cd']:,.0f} kVA) in {(b.recorded_md_kva < 0.75 * t['cd']).sum()} of 12 months - paying for unused demand",
-                             safety="Paperwork with the utility; no equipment change. Check growth plans first", confidence="Medium"))
+                             safety="An application to the utility, no equipment change; check expansion plans first", confidence="Medium"))
         # 4. CHW reset to 8 degC in cool, light-load hours (guide allows)
         if s == "GGN":
             ok = (d.temp_c < 24) & (d.chw_setpoint_c == 7.0) & d.chiller_load_tr.between(1, 280) & d.valid
@@ -94,7 +94,7 @@ def plan() -> pd.DataFrame:
             kwh = d.chillers_kw[ok].sum() * per_c
             rows.append(dict(site=s, measure="CHW reset 7 → 8 °C when outdoor < 24 °C and plant load is light", category="Energy", inr=kwh * rkwh,
                              basis=f"{ok.sum():,} eligible hours, {d.chillers_kw[ok].sum():,.0f} chiller kWh × {per_c * 100:.1f} %/°C (lowest metered penalty per °C)",
-                             safety="Within the guide's reset rule; never below 6.5 °C; watch humidity complaints", confidence="Medium"))
+                             safety="Only on cool, quiet days; never below 6.5 °C; watch for humidity complaints", confidence="Medium"))
         # 5. PF up to 0.99: energy, FSA and duty are billed per kVAh, so every 0.01 of PF is ~1 % of the energy line
         from bills import meter_quantities
         q = meter_quantities(s, raw=False).sum()                     # meter, not bills: the Goa July bill's kVAh is an estimate
@@ -106,21 +106,21 @@ def plan() -> pd.DataFrame:
         rows.append(dict(site=s, measure=f"Hold PF at {PF_TARGET}: add / retune APFC steps (average PF {pf_now:.3f} today)", category="Energy",
                          inr=max(cut * per_kvah - already, 0.0),
                          basis=f"{cut:,.0f} kVAh/yr less at the same kWh × ₹{per_kvah:.2f}/kVAh, minus ₹{already:,.0f} already counted for PF-drop repairs",
-                         safety="No comfort impact; avoid over-correction (leading PF) — size steps with the APFC vendor", confidence="High"))
+                         safety="No effect on guests or comfort; the panel supplier sizes the upgrade so it does not over-correct", confidence="High"))
         # 6. Night public lighting: 00-05 h draw is above daytime at every hotel
         lt = d[d.timestamp.dt.hour.between(0, 5)].lighting_kw.sum()
         rows.append(dict(site=s, measure=f"Dim / sensor-switch public lighting 00:00–06:00 by {NIGHT_LIGHT_CUT:.0%} (keep egress and security lighting)",
                          category="Energy", inr=lt * NIGHT_LIGHT_CUT * rkwh,
                          basis=f"{lt:,.0f} kWh/yr of lighting between 00:00 and 06:00 (night mean {d[d.timestamp.dt.hour.between(0, 5)].lighting_kw.mean():.0f} kW vs "
                                f"{d[d.timestamp.dt.hour.between(6, 17)].lighting_kw.mean():.0f} kW by day) × {NIGHT_LIGHT_CUT:.0%} assumed",
-                         safety="Emergency and egress lighting untouched (NBC); security walk-through before setting levels", confidence="Low (assumed share)"))
+                         safety="Emergency and exit lighting untouched; security walks the areas before levels are set", confidence="Low (assumed share)"))
         if s == "GGN":
             sub = pd.read_parquet(CLEAN / "sub_ggn_hourly.parquet")
             pk = (sub.chw_pumps_kw + sub.cw_pumps_ct_kw).sum()
             rows.append(dict(site=s, measure="VFDs on chilled-water and condenser pumps (constant speed today)", category="Capital (note)",
                              inr=pk * VFD_SHARE * rkwh,
                              basis=f"{pk:,.0f} kWh/yr of pump energy, flat whatever the plant load; {VFD_SHARE:.0%} typical for variable-flow conversion",
-                             safety="Keep minimum chiller flow; commissioning by the chiller OEM. Capital item — outside the brief's scope, shown as a note",
+                             safety="Set up by the chiller manufacturer to keep enough water flowing; an investment, so not counted in the total",
                              confidence="Low (capital, typical %)"))
     p = pd.DataFrame(rows)
     bill = pd.read_parquet(CLEAN / "monthly_bills.parquet").groupby("site").total_energy_cost_inr.sum()

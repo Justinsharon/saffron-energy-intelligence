@@ -56,8 +56,8 @@ export default function Ask() {
     <>
       <div className="page-head">
         <div>
-          <h1>Ask about energy</h1>
-          <p className="lead">Plain questions about bills, alerts, tomorrow's demand or savings. Every number in an answer comes from the models and is checked before you see it. It recommends; it never switches anything.</p>
+          <h1>Ask</h1>
+          <p className="lead">Ask about bills, waste, tomorrow's power demand or savings, in your own words. Every figure in an answer comes from the hotel's own data and is checked before you see it. Ask can suggest changes; it never switches anything.</p>
         </div>
       </div>
       <div className="prompts" style={{ marginBottom: 16 }}>
