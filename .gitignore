@@ -10,3 +10,7 @@ __pycache__/
 *.pdf
 ~$*
 data/feedback/
+
+web/node_modules/
+web/dist/
+web/.netlify/

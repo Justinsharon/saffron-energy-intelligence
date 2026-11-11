@@ -24,7 +24,19 @@ The product **recommends and never controls equipment**. All data is synthetic a
 
 The detailed progress log, acceptance tests (T1–T10), data schemas and findings are in [CONTEXT.md](CONTEXT.md).
 
-## Run the app
+## Web app (new UI, `web/`)
+
+A React + TypeScript front end built around the four users in the brief (duty engineer, chief engineer, GM, finance), with role tabs
+Shift / Demand / Engineering / GM / Finance / Ask and a replay clock. It reads static JSON exported from the models and uses two Netlify
+functions: `assistant` (Claude with tools, safety guard and number check) and `ratings` (alert ratings in a GitHub Gist).
+
+```bash
+uv run python src/build_app_data.py && uv run python tools/export_web_data.py   # refresh web/public/data/
+cd web && npm install && npm run dev                                              # http://localhost:5173
+```
+Deploy on Netlify: import the repo, base directory `web`; environment variables `ANTHROPIC_API_KEY`, `GITHUB_TOKEN`, `RATINGS_GIST_ID`.
+
+## Run the Streamlit app
 
 ```bash
 uv sync

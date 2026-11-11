@@ -1,0 +1,16 @@
+# Netlify: set "Base directory" to web in the site settings (this file lives there).
+[build]
+  command = "npm run build"
+  publish = "dist"
+
+[build.environment]
+  NODE_VERSION = "22"
+
+[functions]
+  directory = "netlify/functions"
+  node_bundler = "esbuild"
+
+[[headers]]
+  for = "/data/*"
+  [headers.values]
+  Cache-Control = "public, max-age=3600"

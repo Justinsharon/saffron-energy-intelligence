@@ -139,7 +139,7 @@ def shift_plan(hot_ref: pd.DataFrame, peak_hour: int, base_kva: float, pf: float
     spec = [
         ("laundry_kw", "Hold laundry batches out of the afternoon peak (finish before 12:00 or start after 18:00)", "recommend only: flexible load", 1.0),
         ("ev_chargers_kw", f"Throttle EV charging while site demand is above {EV_THROTTLE_KVA} kVA; notify guests", "allowed by the guide above 920 kVA", 1.0),
-        ("water_heating_kw", "Defer heat-pump water heating to off-peak; the daily >= 60 degC cycle must still complete", "recommend only: Legionella cycle", 1.0),
+        ("water_heating_kw", "Defer heat-pump water heating to off-peak; the daily ≥ 60 °C cycle must still complete", "recommend only: Legionella cycle", 1.0),
         ("ahu_banquet_kw", "Stagger banquet-hall AHU pre-cooling: start 1 h before the event, not earlier; stop 1 h after", "within the guide's AHU schedule rule", 0.5),
     ]
     rows = []

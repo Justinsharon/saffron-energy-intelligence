@@ -54,7 +54,7 @@ def plan() -> pd.DataFrame:
         # 1. Fix detected waste (alerts) - energy, excluding laundry (ToD) and demand (below)
         e = c[~c.rule.isin(["LAUNDRY_IN_PEAK", "DEMAND_NEAR_CONTRACT", "POWER_FACTOR_DROP"])]
         rows.append(dict(site=s, measure="Act on detected waste alerts (staging, hand-mode AHUs, re-heat, lighting, pumps, setpoints, exhaust)",
-                         category="Energy", inr=e.cost_inr.sum(), basis=f"{len(e)} alerts over the year; ₹ is the detector's (staging/CHW/AHU are lower bounds)",
+                         category="Energy", inr=e.cost_inr.sum(), basis=f"{len(e)} alerts over the year; ₹ from the detector, staging and CHW recalibrated to metered kW/TR (hand-mode AHU is a lower bound)",
                          safety="Each action carries its guardrail; kitchen exhaust interlock only, never auto-off", confidence="High"))
         pfa = c[c.rule == "POWER_FACTOR_DROP"]
         if len(pfa):
