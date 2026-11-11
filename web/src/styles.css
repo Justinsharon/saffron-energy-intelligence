@@ -270,3 +270,4 @@ footer.foot { max-width: 1300px; }
   .top, .nav, .hero { padding-left: 16px; padding-right: 16px; }
   main { padding: 20px 16px 50px; }
 }
+.nav { scrollbar-width: none; } .nav::-webkit-scrollbar { display: none; }
