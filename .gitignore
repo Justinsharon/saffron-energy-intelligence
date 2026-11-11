@@ -14,3 +14,4 @@ data/feedback/
 web/node_modules/
 web/dist/
 web/.netlify/
+web/tsconfig.tsbuildinfo
