@@ -88,6 +88,28 @@ export default function Finance() {
   );
 }
 
+/** Nested circles sharing a bottom edge; area is proportional to the amount, the innermost is the headline. */
+function Rings({ items }: { items: { label: string; v: number }[] }) {
+  const max = Math.max(...items.map((i) => i.v));
+  const fills = ["#fdf2ed", "#fbe2d9", "#f6c3b1", "#e8613c"];
+  return (
+    <>
+    <div className="rings" role="img" aria-label={items.map((i) => `${i.label}: ${inr(i.v)}`).join("; ")} style={{ margin: "8px auto 14px" }}>
+      {items.map((it, k) => {
+        const d = 300 * Math.sqrt(it.v / max);
+        const core = k === items.length - 1;
+        const show = k === 0 || core;
+        return <div key={it.label} className={`ring${core ? " core" : ""}`} style={{ width: d, height: d, background: fills[k] }}>
+          {show && <span style={{ textAlign: "center", lineHeight: 1.2 }}>{inr(it.v)}<br /><small style={{ fontWeight: 500, fontSize: 11, opacity: 0.8 }}>{it.label}</small></span>}</div>;
+      })}
+    </div>
+    <div className="legend" style={{ justifyContent: "center", marginBottom: 12 }}>
+      {items.map((it, k) => <span key={it.label}><i style={{ background: fills[k], width: 10, height: 10, borderRadius: 5, border: "1px solid #f0d5ca" }} />{it.label}: <strong>{inr(it.v)}</strong></span>)}
+    </div>
+    </>
+  );
+}
+
 function SavingsBlock({ sv }: { sv: Savings }) {
   const core = sv.measures.filter((m) => m.category !== "Capital (note)");
   const capx = sv.measures.filter((m) => m.category === "Capital (note)");
@@ -111,22 +133,28 @@ function SavingsBlock({ sv }: { sv: Savings }) {
         <div className="panel">
           <ResponsiveContainer width="100%" height={330}>
             <BarChart data={groups} layout="vertical" margin={{ top: 4, right: 70, bottom: 4, left: 8 }}>
-              <CartesianGrid stroke="#e8ecee" horizontal={false} />
-              <XAxis type="number" domain={[0, 12]} tickFormatter={(v) => `${v}%`} tick={{ fontSize: 11, fill: "#7b8792" }} />
-              <YAxis type="category" dataKey="k" width={170} tick={{ fontSize: 12, fill: "#4a5763" }} />
-              <ReferenceArea x1={8} x2={12} fill="#2f7a57" fillOpacity={0.08} label={{ value: "Goal 8–12%", position: "insideTop", fontSize: 11, fill: "#2f7a57" }} />
+              <CartesianGrid stroke="#efefef" horizontal={false} />
+              <XAxis type="number" domain={[0, 12]} tickFormatter={(v) => `${v}%`} tick={{ fontSize: 11, fill: "#9b9b9b" }} />
+              <YAxis type="category" dataKey="k" width={170} tick={{ fontSize: 12, fill: "#5c5c5c" }} />
+              <ReferenceArea x1={8} x2={12} fill="#3f8a62" fillOpacity={0.08} label={{ value: "Goal 8–12%", position: "insideTop", fontSize: 11, fill: "#3f8a62" }} />
               <Tooltip formatter={(_v: number, _k: string, p: any) => [`${inr(p.payload.inr)} (${p.payload.v.toFixed(2)}% of bill)`, ""]} />
               <Bar dataKey="base" stackId="s" fill="transparent" isAnimationActive={false} />
               <Bar dataKey="v" stackId="s" isAnimationActive={false}>
-                {groups.map((g) => <Cell key={g.k} fill={g.k.includes("investment") ? "#c9d1d5" : g.k === "Night lighting" ? "#efc77f" : "#e3a23b"} />)}
-                <LabelList dataKey="inr" content={(p: any) => <text x={(p.x ?? 0) + (p.width ?? 0) + 6} y={(p.y ?? 0) + (p.height ?? 0) / 2 + 4} fontSize={11} fill="#4a5763">{inr(p.value)}</text>} />
+                {groups.map((g) => <Cell key={g.k} fill={g.k.includes("investment") ? "#d8d8d8" : g.k === "Night lighting" ? "#f4b39d" : "#e8613c"} />)}
+                <LabelList dataKey="inr" content={(p: any) => <text x={(p.x ?? 0) + (p.width ?? 0) + 6} y={(p.y ?? 0) + (p.height ?? 0) / 2 + 4} fontSize={11} fill="#5c5c5c">{inr(p.value)}</text>} />
               </Bar>
             </BarChart>
           </ResponsiveContainer>
-          <p className="muted small" style={{ marginBottom: 0 }}>Each step adds to the one before. Light saffron is a rough estimate. Grey needs investment and is not counted in the total.</p>
+          <p className="muted small" style={{ marginBottom: 0 }}>Each step adds to the one before. Light coral is a rough estimate. Grey needs investment and is not counted in the total.</p>
         </div>
         <div className="panel">
           <h3>Getting to the 8–12% goal</h3>
+          <Rings items={[
+            { label: "Goal 12%", v: 0.12 * sv.group_bill },
+            { label: "Goal 8%", v: 0.08 * sv.group_bill },
+            { label: `With investment ${((total + capx.reduce((a, m) => a + m.inr, 0)) / sv.group_bill * 100).toFixed(1)}%`, v: total + capx.reduce((a, m) => a + m.inr, 0) },
+            { label: `Found ${(total / sv.group_bill * 100).toFixed(1)}%`, v: total },
+          ]} />
           <p className="small" style={{ marginTop: 0 }}>Day-to-day waste is only about 3% of the bill, so fixing waste alone won't reach 8%. Most of the rest comes from how the hotels are billed: the capacitor panel and the contracted power limit. Two more steps could close the gap:</p>
           <ul className="small" style={{ paddingLeft: 18 }}>
             <li>A walk-through of the night-time base load at Gurugram (about 330 kW between 1 and 5 am), much of it not on a sub-meter.</li>
@@ -160,12 +188,12 @@ function OptionC({ sv }: { sv: Savings }) {
         <div className="panel">
           <ResponsiveContainer width="100%" height={240}>
             <ComposedChart data={rows} margin={{ top: 8, right: 8, bottom: 0, left: 8 }}>
-              <CartesianGrid stroke="#e8ecee" vertical={false} />
-              <XAxis dataKey="month" tick={{ fontSize: 11, fill: "#7b8792" }} />
-              <YAxis tickFormatter={(v) => `${Math.round(v / 1000)}k`} tick={{ fontSize: 11, fill: "#7b8792" }} width={48} />
+              <CartesianGrid stroke="#efefef" vertical={false} />
+              <XAxis dataKey="month" tick={{ fontSize: 11, fill: "#9b9b9b" }} />
+              <YAxis tickFormatter={(v) => `${Math.round(v / 1000)}k`} tick={{ fontSize: 11, fill: "#9b9b9b" }} width={48} />
               <Tooltip formatter={(v: number, k: string) => [`${n(v)} kWh`, k === "baseline" ? "Adjusted baseline" : "Actual"]} />
-              <Bar dataKey="baseline" fill="#d5dcdf" isAnimationActive={false} />
-              <Line dataKey="actual" stroke="#17212a" strokeWidth={2} dot={{ r: 3 }} isAnimationActive={false} />
+              <Bar dataKey="baseline" fill="#e6e6e6" isAnimationActive={false} />
+              <Line dataKey="actual" stroke="#151515" strokeWidth={2} dot={{ r: 3 }} isAnimationActive={false} />
             </ComposedChart>
           </ResponsiveContainer>
           <p className="muted small" style={{ marginBottom: 0 }}>Grey bars show what each month should have used, worked out without looking at that month. The line shows what the meter recorded. The closer they are, the smaller the saving that can be proven.</p>

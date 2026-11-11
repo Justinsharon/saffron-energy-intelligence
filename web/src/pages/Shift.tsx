@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
 import { Line, LineChart, ResponsiveContainer } from "recharts";
 import { useClock } from "../App";
-import { Ticket, type Ack } from "../components/parts";
+import { Gauge, Ticket, type Ack } from "../components/parts";
+import { ICON } from "../App";
 import { SITES, SITE_NAME, useData, type Alert, type Fault, type ForecastDay, type Hotel, type Hourly, type Site } from "../data";
 import { addMs, fmtD, fmtDT, inr, n, parse, iso } from "../format";
 import { pickCell, useLiveDay, useWeather } from "../live";
@@ -57,12 +58,38 @@ function HotelCard({ s, now, open, atStake, pressed, onClick, temp }: { s: Site;
       </div>
       <div style={{ height: 38, marginTop: 2 }} aria-hidden>
         {v && <ResponsiveContainer width="100%" height="100%"><LineChart data={v.spark} margin={{ top: 4, bottom: 2, left: 0, right: 0 }}>
-          <Line dataKey="b" stroke="#2b6c8f" strokeDasharray="3 3" dot={false} strokeWidth={1.2} isAnimationActive={false} />
-          <Line dataKey="a" stroke={open ? "#c4351f" : "#17212a"} dot={false} strokeWidth={1.6} isAnimationActive={false} />
+          <Line dataKey="b" stroke="#a8a8a8" strokeDasharray="3 3" dot={false} strokeWidth={1.2} isAnimationActive={false} />
+          <Line dataKey="a" stroke={open ? "#c93a1c" : "#151515"} dot={false} strokeWidth={1.6} isAnimationActive={false} />
         </LineChart></ResponsiveContainer>}
       </div>
       <span className="small muted">Last 24 hours: used (solid) vs expected (dashed)</span>
     </button>
+  );
+}
+
+const MONTHS = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
+const DAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+
+/** Top of Today: the date, a way into the problems, and a way into Ask. Sits in the frame header, above the cards. */
+export function TodayHero() {
+  const { now, go } = useClock();
+  const d = parse(now);
+  return (
+    <section className="hero">
+      <div className="hero-left">
+        <div className="daybox">
+          <span className="circle big" aria-hidden>{d.getUTCDate()}</span>
+          <span>{DAYS[d.getUTCDay()].slice(0, 3)},<br />{MONTHS[d.getUTCMonth()]}</span>
+        </div>
+        <button className="btn accent big" style={{ display: "inline-flex", gap: 12, alignItems: "center" }}
+                onClick={() => document.getElementById("attention")?.scrollIntoView({ behavior: "smooth" })}>What needs attention {ICON.arrow}</button>
+      </div>
+      <div className="hero-right">
+        <p className="hello">{greeting(d.getUTCHours())}. Need a hand?
+          <button className="ask-line" onClick={() => go("ask")}>Ask me anything about the hotels.</button></p>
+        <button className="circle big" aria-label="Ask a question" onClick={() => go("ask")}>{ICON.ask}</button>
+      </div>
+    </section>
   );
 }
 
@@ -109,7 +136,7 @@ export default function Shift() {
     <>
       <div className="page-head">
         <div>
-          <h1>{greeting(Number(shown.slice(11, 13)))}</h1>
+          <h1 style={{ fontSize: 22 }}>Right now</h1>
           <p className="lead">
             {!v ? "Checking the hotels…" : v.open.length === 0 ? `Nothing needs attention ${where} right now.` :
               <>{v.open.length} {v.open.length === 1 ? "issue is" : "issues are"} wasting about <strong>{inr(v.stake)} a day</strong> {where}. Most costly first.</>}
@@ -129,7 +156,7 @@ export default function Shift() {
         </div>
       ))}
 
-      <div className="section-title">
+      <div className="section-title" id="attention">
         <h2>Needs attention{site !== "ALL" ? ` at ${SITE_NAME[site]}` : ""}</h2>
         {site !== "ALL" && <button className="btn ghost" onClick={() => setSite("ALL")}>Show all hotels</button>}
       </div>
@@ -147,15 +174,18 @@ export default function Shift() {
         <>
           <div className="section-title"><h2>Tomorrow at Gurugram</h2></div>
           <div className={`banner ${fc.risk.level === "BREACH RISK" ? "breach" : fc.risk.level === "WARNING" ? "warn" : fc.risk.level === "OK" ? "ok" : ""}`}>
-            <div>
-              <strong>{fc.risk.level === "OK" ? "Power demand should stay comfortably under the limit" : fc.risk.level === "BREACH RISK" ? "Risk of going over the contracted power limit" : "Power demand will run close to the limit"}</strong>
-              <span className="muted"> · {fmtD(tomorrow)}</span>
-              <div className="small" style={{ color: "var(--ink-2)", marginTop: 2 }}>
-                Expected peak about <strong className="num">{n(fc.risk.peak)} kVA</strong> around {fc.risk.hour}:00 (limit 1,000 kVA){live && tmaxT != null ? `, with a top of ${Math.round(tmaxT)} °C forecast` : ""}.
-                {fc.risk.level === "BREACH RISK" && fc.risk.stack_peak >= 1000 && <> If laundry, water heating and banquet cooling all run that afternoon, it could reach {n(fc.risk.stack_peak)} kVA.</>}
+            <div className="peak-card">
+              <Gauge value={fc.risk.peak} max={1000} label={`${Math.round(fc.risk.peak / 10)}%`} sub="of the limit" />
+              <div style={{ maxWidth: "62ch" }}>
+                <div className="muted small">{fmtD(tomorrow)}</div>
+                <div style={{ fontSize: 19, fontWeight: 700, lineHeight: 1.25, margin: "2px 0 6px" }}>{fc.risk.level === "OK" ? "Power demand should stay comfortably under the limit" : fc.risk.level === "BREACH RISK" ? "Risk of going over the contracted power limit" : "Power demand will run close to the limit"}</div>
+                <div className="small" style={{ color: "var(--ink-2)" }}>
+                  Expected peak about <strong className="num">{n(fc.risk.peak)} kVA</strong> around {fc.risk.hour}:00 (limit 1,000 kVA){live && tmaxT != null ? `, with a top of ${Math.round(tmaxT)} °C forecast` : ""}.
+                  {fc.risk.level === "BREACH RISK" && fc.risk.stack_peak >= 1000 && <> If laundry, water heating and banquet cooling all run that afternoon, it could reach {n(fc.risk.stack_peak)} kVA.</>}
+                </div>
               </div>
             </div>
-            <button className="btn ghost" onClick={() => go("demand")}>See the plan</button>
+            <button className="btn" onClick={() => go("demand")}>See the plan</button>
           </div>
         </>
       )}

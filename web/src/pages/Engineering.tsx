@@ -66,7 +66,7 @@ export default function Engineering() {
                               onClick={() => c > 0 && setSel({ title: r.t, w })}
                               style={{ border: 0, padding: 0, cursor: c > 0 ? "pointer" : "default",
                                        outline: sel && sel.title === r.t && sel.w === w ? "2px solid var(--ink)" : undefined,
-                                       background: w > nowW ? "transparent" : c === 0 ? "#edf0f1" : `rgba(196,53,31,${0.18 + 0.82 * Math.sqrt(c / v.max)})` }} />
+                                       background: w > nowW ? "transparent" : c === 0 ? "#f0f0f0" : `rgba(232,97,60,${0.18 + 0.82 * Math.sqrt(c / v.max)})` }} />
                     ))}
                   </div>
                 </div>

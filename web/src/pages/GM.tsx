@@ -8,8 +8,8 @@ import { SiteSwitch } from "./Shift";
 import { DRIVER } from "../copy";
 
 const COMP_COLORS: Record<string, string> = {
-  "Energy (kVAh)": "#22323d", "Demand charge": "#2b6c8f", "Excess-demand penalty": "#c4351f", "Fuel surcharge": "#7b8792",
-  "Electricity duty": "#a9b4bb", "Municipal tax": "#cdd5d9", "ToD net": "#e3a23b", "Diesel (DG)": "#6b4c9a",
+  "Energy (kVAh)": "#151515", "Demand charge": "#a8a8a8", "Excess-demand penalty": "#c93a1c", "Fuel surcharge": "#9b9b9b",
+  "Electricity duty": "#c4c4c4", "Municipal tax": "#dcdcdc", "ToD net": "#e8613c", "Diesel (DG)": "#7d64a8",
 };
 
 const COMP_NAME: Record<string, string> = {
@@ -106,9 +106,9 @@ export default function GM() {
       <div className="panel">
         <ResponsiveContainer width="100%" height={300}>
           <BarChart data={monthly} margin={{ top: 8, right: 8, bottom: 0, left: 8 }}>
-            <CartesianGrid stroke="#e8ecee" vertical={false} />
-            <XAxis dataKey="month" tick={{ fontSize: 11, fill: "#7b8792" }} />
-            <YAxis tickFormatter={(v) => inr(v)} tick={{ fontSize: 11, fill: "#7b8792" }} width={70} />
+            <CartesianGrid stroke="#efefef" vertical={false} />
+            <XAxis dataKey="month" tick={{ fontSize: 11, fill: "#9b9b9b" }} />
+            <YAxis tickFormatter={(v) => inr(v)} tick={{ fontSize: 11, fill: "#9b9b9b" }} width={70} />
             <Tooltip formatter={(v: number) => inr(v, { exact: true })} />
             <Legend wrapperStyle={{ fontSize: 12 }} />
             {Object.keys(COMP_COLORS).map((k) => <Bar key={k} dataKey={k} name={COMP_NAME[k]} stackId="b" fill={COMP_COLORS[k]} isAnimationActive={false} />)}

@@ -38,7 +38,7 @@ const SIGNAL_LABEL: Record<string, string> = {
   n_chillers: "Chillers shown running", kw_per_tr: "Chiller power per ton of cooling (lower is better)", chw_setpoint_c: "Chilled-water temperature setting (°C)",
   kva_max_in_hour: "Peak power demand (kVA)", ev_chargers_kw: "EV chargers (kW)",
 };
-const SIG_COLORS = ["#c27a12", "#6b4c9a", "#2f7a57"];
+const SIG_COLORS = ["#e2a04a", "#7d64a8", "#3f8a62"];
 
 function tick(t: string) {
   const d = parse(t);
@@ -62,19 +62,19 @@ export function Evidence({ a, upto }: { a: Alert; upto?: string }) {
   return (
     <div>
       <div className="legend" style={{ marginBottom: 4 }}>
-        <span><i style={{ background: "#17212a" }} />Electricity the hotel used (kW)</span>
-        <span><i style={{ background: "#2b6c8f" }} />What it should use for that weather, guests and events</span>
-        <span><i style={{ background: "#e3a23b", height: 8, opacity: 0.4 }} />While the problem ran</span>
+        <span><i style={{ background: "#151515" }} />Electricity the hotel used (kW)</span>
+        <span><i style={{ background: "#a8a8a8" }} />What it should use for that weather, guests and events</span>
+        <span><i style={{ background: "#e8613c", height: 8, opacity: 0.4 }} />While the problem ran</span>
       </div>
       <ResponsiveContainer width="100%" height={190}>
         <ComposedChart data={rows} margin={{ top: 4, right: 8, bottom: 0, left: -8 }}>
-          <CartesianGrid stroke="#e8ecee" vertical={false} />
-          <XAxis dataKey="t" tickFormatter={tick} minTickGap={50} tick={{ fontSize: 11, fill: "#7b8792" }} />
-          <YAxis tick={{ fontSize: 11, fill: "#7b8792" }} width={46} />
+          <CartesianGrid stroke="#efefef" vertical={false} />
+          <XAxis dataKey="t" tickFormatter={tick} minTickGap={50} tick={{ fontSize: 11, fill: "#9b9b9b" }} />
+          <YAxis tick={{ fontSize: 11, fill: "#9b9b9b" }} width={46} />
           <Tooltip labelFormatter={(t) => fmtDT(String(t) + ":00")} formatter={(v: number, k: string) => [n(v, 0) + " kW", k === "actual" ? "Actual" : "Expected"]} />
-          <ReferenceArea x1={x0} x2={x1} fill="#e3a23b" fillOpacity={0.14} />
-          <Line dataKey="baseline" stroke="#2b6c8f" strokeDasharray="4 3" dot={false} strokeWidth={1.6} isAnimationActive={false} />
-          <Line dataKey="actual" stroke="#17212a" dot={false} strokeWidth={1.6} isAnimationActive={false} />
+          <ReferenceArea x1={x0} x2={x1} fill="#e8613c" fillOpacity={0.14} />
+          <Line dataKey="baseline" stroke="#a8a8a8" strokeDasharray="4 3" dot={false} strokeWidth={1.6} isAnimationActive={false} />
+          <Line dataKey="actual" stroke="#151515" dot={false} strokeWidth={1.6} isAnimationActive={false} />
         </ComposedChart>
       </ResponsiveContainer>
       {big.length > 0 && <SignalChart rows={rows} sigs={big} x0={x0} x1={x1} />}
@@ -95,12 +95,12 @@ function SignalChart({ rows, sigs, x0, x1, height = 150 }: { rows: Record<string
       </div>
       <ResponsiveContainer width="100%" height={height}>
         <ComposedChart data={rows} margin={{ top: 4, right: 8, bottom: 0, left: -8 }}>
-          <CartesianGrid stroke="#e8ecee" vertical={false} />
-          <XAxis dataKey="t" tickFormatter={tick} minTickGap={50} tick={{ fontSize: 11, fill: "#7b8792" }} />
-          <YAxis yAxisId="a" tick={{ fontSize: 11, fill: "#7b8792" }} width={46} domain={["auto", "auto"]} />
-          {twoAxes && <YAxis yAxisId="b" orientation="right" tick={{ fontSize: 11, fill: "#7b8792" }} width={40} />}
+          <CartesianGrid stroke="#efefef" vertical={false} />
+          <XAxis dataKey="t" tickFormatter={tick} minTickGap={50} tick={{ fontSize: 11, fill: "#9b9b9b" }} />
+          <YAxis yAxisId="a" tick={{ fontSize: 11, fill: "#9b9b9b" }} width={46} domain={["auto", "auto"]} />
+          {twoAxes && <YAxis yAxisId="b" orientation="right" tick={{ fontSize: 11, fill: "#9b9b9b" }} width={40} />}
           <Tooltip labelFormatter={(t) => fmtDT(String(t) + ":00")} formatter={(v: number, k: string) => [n(v, RATIO.has(k) ? 2 : 0), SIGNAL_LABEL[k] ?? k]} />
-          <ReferenceArea yAxisId="a" x1={x0} x2={x1} fill="#e3a23b" fillOpacity={0.14} />
+          <ReferenceArea yAxisId="a" x1={x0} x2={x1} fill="#e8613c" fillOpacity={0.14} />
           {sigs.map((s, i) => (
             <Line key={s} yAxisId={i === 0 ? "a" : "b"} dataKey={s} stroke={SIG_COLORS[i % 3]} dot={false} strokeWidth={1.6}
                   type={STEP.has(s) ? "stepAfter" : "linear"} isAnimationActive={false} connectNulls />
@@ -195,18 +195,18 @@ export function Waterfall({ start, end, startLabel, endLabel, steps, height = 30
   return (
     <ResponsiveContainer width="100%" height={height + 30}>
       <ComposedChart data={rows} margin={{ top: 22, right: 8, bottom: 4, left: 8 }}>
-        <CartesianGrid stroke="#e8ecee" vertical={false} />
-        <XAxis dataKey="label" interval={0} angle={-35} textAnchor="end" tick={{ fontSize: 11.5, fill: "#4a5763" }} height={78} />
-        <YAxis domain={[lo, hi]} tickFormatter={(v) => inr(v)} tick={{ fontSize: 11, fill: "#7b8792" }} width={70} allowDataOverflow />
+        <CartesianGrid stroke="#efefef" vertical={false} />
+        <XAxis dataKey="label" interval={0} angle={-35} textAnchor="end" tick={{ fontSize: 11.5, fill: "#5c5c5c" }} height={78} />
+        <YAxis domain={[lo, hi]} tickFormatter={(v) => inr(v)} tick={{ fontSize: 11, fill: "#9b9b9b" }} width={70} allowDataOverflow />
         <Tooltip formatter={(_v: number, _k: string, p: any) => [p.payload.kind === "total" ? inr(p.payload.value, { exact: true }) : (signed(p.payload) >= 0 ? "+" : "") + inr(signed(p.payload), { exact: true }), ""]} />
         <Bar dataKey="base" stackId="w" fill="transparent" isAnimationActive={false} />
         <Bar dataKey="value" stackId="w" isAnimationActive={false} radius={[2, 2, 0, 0]}>
-          {rows.map((r, i) => <Cell key={i} fill={r.kind === "total" ? "#22323d" : r.kind === "up" ? "#c4351f" : "#2f7a57"} />)}
+          {rows.map((r, i) => <Cell key={i} fill={r.kind === "total" ? "#151515" : r.kind === "up" ? "#c93a1c" : "#3f8a62"} />)}
           <LabelList dataKey="value" position="top" formatter={() => ""} content={(p: any) => {
             const r = rows[p.index ?? 0];
             const txt = r.kind === "total" ? inr(r.value) : (r.kind === "up" ? "+" : "−") + inr(r.value);
             if (r.kind !== "total" && rows.length > 8 && r.value < (hi - lo) * 0.02) return null;   // tiny steps: tooltip only, avoids label pile-ups
-            return <text x={(p.x ?? 0) + (p.width ?? 0) / 2} y={(p.y ?? 0) - 6} textAnchor="middle" fontSize={11} fill="#4a5763">{txt}</text>;
+            return <text x={(p.x ?? 0) + (p.width ?? 0) / 2} y={(p.y ?? 0) - 6} textAnchor="middle" fontSize={11} fill="#5c5c5c">{txt}</text>;
           }} />
         </Bar>
       </ComposedChart>
@@ -219,23 +219,39 @@ export function KVA({ hoursArr, pred, actual, cd = 1000, stack }: { hoursArr: nu
   return (
     <>
       <div className="legend" style={{ marginBottom: 4 }}>
-        <span><i style={{ background: "#e3a23b" }} />Forecast power demand (kVA)</span>
-        {actual && <span><i style={{ background: "#17212a" }} />What actually happened</span>}
-        <span><i style={{ background: "#c4351f" }} />Contracted limit {n(cd)} kVA</span>
-        <span><i style={{ background: "#c27a12" }} />Early-warning level 920 kVA</span>
+        <span><i style={{ background: "#e8613c" }} />Forecast power demand (kVA)</span>
+        {actual && <span><i style={{ background: "#151515" }} />What actually happened</span>}
+        <span><i style={{ background: "#c93a1c" }} />Contracted limit {n(cd)} kVA</span>
+        <span><i style={{ background: "#e2a04a" }} />Early-warning level 920 kVA</span>
       </div>
       <ResponsiveContainer width="100%" height={260}>
         <ComposedChart data={rows} margin={{ top: 8, right: 10, bottom: 0, left: -6 }}>
-          <CartesianGrid stroke="#e8ecee" vertical={false} />
-          <XAxis dataKey="h" tickFormatter={(h) => `${h}:00`} tick={{ fontSize: 11, fill: "#7b8792" }} />
-          <YAxis domain={[300, Math.max(1100, (stack ?? 0) + 40)]} tick={{ fontSize: 11, fill: "#7b8792" }} width={48} />
+          <CartesianGrid stroke="#efefef" vertical={false} />
+          <XAxis dataKey="h" tickFormatter={(h) => `${h}:00`} tick={{ fontSize: 11, fill: "#9b9b9b" }} />
+          <YAxis domain={[300, Math.max(1100, (stack ?? 0) + 40)]} tick={{ fontSize: 11, fill: "#9b9b9b" }} width={48} />
           <Tooltip labelFormatter={(h) => `${h}:00`} formatter={(v: number, k: string) => [n(v) + " kVA", k === "pred" ? "Forecast" : "Actual"]} />
-          <ReferenceLine y={cd} stroke="#c4351f" strokeDasharray="5 3" />
-          <ReferenceLine y={920} stroke="#c27a12" strokeDasharray="2 3" />
-          <Line dataKey="pred" stroke="#e3a23b" strokeWidth={2.4} dot={false} isAnimationActive={false} />
-          {actual && <Line dataKey="actual" stroke="#17212a" strokeWidth={1.4} dot={false} isAnimationActive={false} />}
+          <ReferenceLine y={cd} stroke="#c93a1c" strokeDasharray="5 3" />
+          <ReferenceLine y={920} stroke="#e2a04a" strokeDasharray="2 3" />
+          <Line dataKey="pred" stroke="#e8613c" strokeWidth={2.4} dot={false} isAnimationActive={false} />
+          {actual && <Line dataKey="actual" stroke="#151515" strokeWidth={1.4} dot={false} isAnimationActive={false} />}
         </ComposedChart>
       </ResponsiveContainer>
     </>
+  );
+}
+
+/** Black ring gauge: a share of a limit, coral arc on a dark ring. */
+export function Gauge({ value, max, label, sub }: { value: number; max: number; label: string; sub: string }) {
+  const f = Math.max(0, Math.min(1, value / max));
+  const r = 54, c = 2 * Math.PI * r;
+  return (
+    <div className="gauge" role="img" aria-label={`${label} ${sub}`}>
+      <svg viewBox="0 0 132 132" aria-hidden>
+        <circle cx="66" cy="66" r={r} fill="none" stroke="#333" strokeWidth="9" />
+        <circle cx="66" cy="66" r={r} fill="none" stroke="#e8613c" strokeWidth="9" strokeLinecap="round"
+                strokeDasharray={`${c * f} ${c}`} transform="rotate(-90 66 66)" />
+      </svg>
+      <div><b>{label}</b><small>{sub}</small></div>
+    </div>
   );
 }
