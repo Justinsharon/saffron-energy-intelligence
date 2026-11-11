@@ -30,7 +30,7 @@ export function SiteSwitch({ value, onChange, all = true }: { value: Site | "ALL
   );
 }
 
-function greeting(h: number) { return h < 5 ? "Good night" : h < 12 ? "Good morning" : h < 17 ? "Good afternoon" : "Good evening"; }
+function greeting(h: number) { return h < 4 ? "Hello" : h < 12 ? "Good morning" : h < 17 ? "Good afternoon" : "Good evening"; }
 
 /** Today so far for one hotel: used vs expected, and the last 24 hours as a sparkline. */
 function HotelCard({ s, now, open, atStake, pressed, onClick, temp }: { s: Site; now: string; open: number; atStake: number; pressed: boolean; onClick: () => void; temp?: number | null }) {

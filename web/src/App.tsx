@@ -99,7 +99,7 @@ export default function App() {
                      style={{ position: "absolute", inset: 0, opacity: 0, pointerEvents: "none" }} />
             </span>
           </span>
-          <button className="search" onClick={() => go("ask")}><span className="circle">{ICON.search}</span>Ask anything about the hotels…</button>
+          <button className="search" onClick={() => go("ask")}><span className="circle">{ICON.search}</span><span className="search-label">Ask anything about the hotels…</span></button>
         </header>
         <nav className="nav" aria-label="Sections">
           {PAGES.map((p) => (

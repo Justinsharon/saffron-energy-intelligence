@@ -250,3 +250,23 @@ details.more-info { margin-top: 10px; }
 details.more-info summary { cursor: pointer; font-size: 13.5px; color: var(--ink-2); font-weight: 600; }
 .live-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--coral); box-shadow: 0 0 0 4px var(--coral-soft); }
 .feed-note { display: inline-block; font-size: 12px; color: var(--ink-3); background: var(--paper); border-radius: 999px; padding: 4px 12px; margin-top: 8px; }
+
+@media (max-width: 1100px) and (min-width: 761px) { .search { min-width: 0; padding: 6px; } .search-label { display: none; } }
+@media (max-width: 760px) { .search { order: 10; flex-basis: 100%; } }
+
+/* Full-bleed: the app is the page, not a card on a page. Header band on top, content band below, both edge to edge. */
+body { background: var(--well); }
+.shell { padding: 0; }
+.frame { max-width: none; border-radius: 0; min-height: 100vh; background: var(--well); overflow: visible; }
+.top, .nav, .hero { background: var(--ground); }
+.top { padding-left: max(30px, calc((100vw - 1300px) / 2)); padding-right: max(30px, calc((100vw - 1300px) / 2)); }
+.nav { padding-left: max(30px, calc((100vw - 1300px) / 2 - 4px)); padding-right: max(30px, calc((100vw - 1300px) / 2)); border-bottom: 1px solid var(--rule); position: sticky; top: 0; z-index: 5; }
+.hero { padding-left: max(30px, calc((100vw - 1300px) / 2)); padding-right: max(30px, calc((100vw - 1300px) / 2)); border-bottom: 1px solid var(--rule); }
+.nav:has(+ .hero) { border-bottom: 0; }
+.content { border-radius: 0; background: var(--well); }
+main { max-width: 1300px; padding: 30px 30px 50px; }
+footer.foot { max-width: 1300px; }
+@media (max-width: 760px) {
+  .top, .nav, .hero { padding-left: 16px; padding-right: 16px; }
+  main { padding: 20px 16px 50px; }
+}
