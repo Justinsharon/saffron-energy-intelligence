@@ -3,7 +3,15 @@ import { Line, LineChart, ResponsiveContainer } from "recharts";
 import { useClock } from "../App";
 import { Ticket, type Ack } from "../components/parts";
 import { SITES, SITE_NAME, useData, type Alert, type Fault, type ForecastDay, type Hotel, type Hourly, type Site } from "../data";
-import { fmtD, fmtDT, inr, n, parse, iso } from "../format";
+import { addMs, fmtD, fmtDT, inr, n, parse, iso } from "../format";
+import { pickCell, useLiveDay, useWeather } from "../live";
+
+/** Move an alert from the sample feed's dates to the dates on screen (no-op when looking back). */
+export function shiftAlert(a: Alert, ms: number): Alert {
+  if (!ms) return a;
+  const f = (t: string) => addMs(t, ms);
+  return { ...a, start: f(a.start), end: f(a.end), alert_time: f(a.alert_time), chart: { ...a.chart, t: a.chart.t.map((t) => f(t + ":00").slice(0, 13)) } };
+}
 
 function loadAcks(): Record<string, Ack> {
   try { return JSON.parse(localStorage.getItem("acks") || "{}"); } catch { return {}; }
@@ -24,7 +32,7 @@ export function SiteSwitch({ value, onChange, all = true }: { value: Site | "ALL
 function greeting(h: number) { return h < 5 ? "Good night" : h < 12 ? "Good morning" : h < 17 ? "Good afternoon" : "Good evening"; }
 
 /** Today so far for one hotel: used vs expected, and the last 24 hours as a sparkline. */
-function HotelCard({ s, now, open, atStake, pressed, onClick }: { s: Site; now: string; open: number; atStake: number; pressed: boolean; onClick: () => void }) {
+function HotelCard({ s, now, open, atStake, pressed, onClick, temp }: { s: Site; now: string; open: number; atStake: number; pressed: boolean; onClick: () => void; temp?: number | null }) {
   const hr = useData<Hourly>(`hourly_${s}.json`);
   const hotels = useData<Record<Site, Hotel>>("hotels.json");
   const v = useMemo(() => {
@@ -41,7 +49,7 @@ function HotelCard({ s, now, open, atStake, pressed, onClick }: { s: Site; now: 
   }, [hr, now]);
   return (
     <button className="hotel" aria-pressed={pressed} onClick={onClick}>
-      <div className="h-top"><span className="h-name">{SITE_NAME[s]}</span><span className="h-rooms">{hotels?.[s].rooms ?? ""} rooms</span></div>
+      <div className="h-top"><span className="h-name">{SITE_NAME[s]}</span><span className="h-rooms">{temp != null ? `${Math.round(temp)} °C · ` : ""}{hotels?.[s].rooms ?? ""} rooms</span></div>
       <div className={`h-state ${open ? "bad" : "ok"}`}>{open ? `${open} ${open === 1 ? "issue needs" : "issues need"} attention` : "All clear"}</div>
       <div className="h-nums">
         <span><b>{open ? inr(atStake) : "₹0"}</b>a day at risk</span>
@@ -59,7 +67,8 @@ function HotelCard({ s, now, open, atStake, pressed, onClick }: { s: Site; now: 
 }
 
 export default function Shift() {
-  const { now, go } = useClock();
+  const { now: shown, dataNow: now, offset, live, go } = useClock();
+  const wx = useWeather();
   const alerts = useData<Alert[]>("alerts.json");
   const faults = useData<Fault[]>("faults.json");
   const days = useData<Record<string, ForecastDay>>("forecast_days.json");
@@ -85,11 +94,14 @@ export default function Shift() {
     const closed = mine.filter((a) => a.channel === "Alert" && a.end <= now && a.end > dayAgo);
     const digest = mine.filter((a) => a.channel === "Daily digest" && a.alert_time <= now && a.alert_time > dayAgo);
     const stake = open.filter((a) => a.cost_basis === "per_day").reduce((s, a) => s + a.per_day, 0);
-    return { open, closed, digest, stake };
-  }, [alerts, site, now]);
+    const sh = (xs: Alert[]) => xs.map((a) => shiftAlert(a, offset));
+    return { open: sh(open), closed: sh(closed), digest: sh(digest), stake };
+  }, [alerts, site, now, offset]);
 
-  const tomorrow = iso(new Date(parse(now).getTime() + 864e5)).slice(0, 10);
-  const fc = days?.[tomorrow];
+  const tomorrow = iso(new Date(parse(shown).getTime() + 864e5)).slice(0, 10);
+  const liveDay = useLiveDay(live ? tomorrow : null);
+  const tmaxT = wx?.daily.GGN[tomorrow]?.tmax;
+  const fc = live ? (liveDay && tmaxT != null ? pickCell(liveDay, tmaxT, 0).f : liveDay ? pickCell(liveDay, liveDay.template_tmax, 0).f : undefined) : days?.[tomorrow];
   const faultNow = faults?.filter((f) => f.start <= now && f.end > now && (site === "ALL" || f.site === site)) ?? [];
   const where = site === "ALL" ? "across the three hotels" : `at ${SITE_NAME[site]}`;
 
@@ -97,22 +109,23 @@ export default function Shift() {
     <>
       <div className="page-head">
         <div>
-          <h1>{greeting(Number(now.slice(11, 13)))}</h1>
+          <h1>{greeting(Number(shown.slice(11, 13)))}</h1>
           <p className="lead">
             {!v ? "Checking the hotels…" : v.open.length === 0 ? `Nothing needs attention ${where} right now.` :
               <>{v.open.length} {v.open.length === 1 ? "issue is" : "issues are"} wasting about <strong>{inr(v.stake)} a day</strong> {where}. Most costly first.</>}
           </p>
+          {live && <span className="feed-note">Meter readings: sample feed, replayed from {fmtD(now)}</span>}
         </div>
       </div>
 
       <div className="hotels">
-        {SITES.map((s) => <HotelCard key={s} s={s} now={now} open={per[s].open.length} atStake={per[s].stake} pressed={site === s} onClick={() => setSite(site === s ? "ALL" : s)} />)}
+        {SITES.map((s) => <HotelCard key={s} s={s} now={now} temp={live ? wx?.now[s] : undefined} open={per[s].open.length} atStake={per[s].stake} pressed={site === s} onClick={() => setSite(site === s ? "ALL" : s)} />)}
       </div>
 
       {faultNow.map((f) => (
         <div key={f.start + f.kind} className="guard note-warn" style={{ marginBottom: 12 }}>
           <span aria-hidden>⚠</span>
-          <span><strong>{f.hotel}: the main meter is sending bad readings since {fmtDT(f.start)}.</strong> We are ignoring those hours, so no false waste alerts will appear. The bill for this month will need checking.</span>
+          <span><strong>{f.hotel}: the main meter is sending bad readings since {fmtDT(addMs(f.start, offset))}.</strong> We are ignoring those hours, so no false waste alerts will appear. The bill for this month will need checking.</span>
         </div>
       ))}
 
@@ -121,12 +134,12 @@ export default function Shift() {
         {site !== "ALL" && <button className="btn ghost" onClick={() => setSite("ALL")}>Show all hotels</button>}
       </div>
       {v && v.open.map((a, i) => (
-        <Ticket key={a.id} a={a} now={now} defaultOpen={i === 0} acked={acks[a.id]} onAck={(x) => setAcks({ ...acks, [x.id]: x })} />
+        <Ticket key={a.id} a={a} now={shown} defaultOpen={i === 0} acked={acks[a.id]} onAck={(x) => setAcks({ ...acks, [x.id]: x })} />
       ))}
       {v && v.open.length === 0 && (
         <div className="panel flat">
           <h3>All clear</h3>
-          <p className="muted" style={{ margin: 0 }}>Every hotel is using what its weather, guests and events call for. Try another date and time at the top right, for example 16 April, 20:00 or 13 May, 10:00.</p>
+          <p className="muted" style={{ margin: 0 }}>Every hotel is using what its weather, guests and events call for. To see how problems are shown, look back to a past day at the top right, for example 16 April 2026 at 20:00.</p>
         </div>
       )}
 
@@ -138,7 +151,7 @@ export default function Shift() {
               <strong>{fc.risk.level === "OK" ? "Power demand should stay comfortably under the limit" : fc.risk.level === "BREACH RISK" ? "Risk of going over the contracted power limit" : "Power demand will run close to the limit"}</strong>
               <span className="muted"> · {fmtD(tomorrow)}</span>
               <div className="small" style={{ color: "var(--ink-2)", marginTop: 2 }}>
-                Expected peak about <strong className="num">{n(fc.risk.peak)} kVA</strong> around {fc.risk.hour}:00 (limit 1,000 kVA).
+                Expected peak about <strong className="num">{n(fc.risk.peak)} kVA</strong> around {fc.risk.hour}:00 (limit 1,000 kVA){live && tmaxT != null ? `, with a top of ${Math.round(tmaxT)} °C forecast` : ""}.
                 {fc.risk.level === "BREACH RISK" && fc.risk.stack_peak >= 1000 && <> If laundry, water heating and banquet cooling all run that afternoon, it could reach {n(fc.risk.stack_peak)} kVA.</>}
               </div>
             </div>

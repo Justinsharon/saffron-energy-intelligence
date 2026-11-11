@@ -123,3 +123,11 @@ export const CONFIDENCE = (c: string) => (c.startsWith("High") ? "Measured" : c.
 export const LOAD: Record<string, string> = {
   Laundry: "Laundry", "Water heating": "Water heating", "Banquet AHUs": "Banquet hall cooling", "EV chargers": "EV charging",
 };
+
+/** Equipment names as the engineers say them. */
+export const EQUIPMENT: Record<string, string> = {
+  "EV chargers": "EV chargers", ahu_banquet_kw: "Banquet hall air handlers", ahu_heaters_kw: "Air-handler heaters", "chiller plant (CH-1 / CH-3)": "Chillers 1 and 3",
+  chillers: "Chillers", "chillers CH-1 + CH-3": "Chillers 1 and 3", chw_setpoint_c: "Chilled-water temperature setting", kitchen_exhaust_mua_kw: "Kitchen extract and fresh-air fans",
+  laundry_kw: "Laundry", lighting_kw: "Lighting", pumps_pool_kw: "Pool pumps", "main incomer (15-min kVA)": "Main power supply", "main meter": "Main meter",
+  "main meter (APFC panel)": "Main meter (capacitor panel)",
+};

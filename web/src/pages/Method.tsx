@@ -53,7 +53,8 @@ export default function Method() {
           <h3 style={{ marginTop: 18 }}>What it can't see yet</h3>
           <ul style={{ margin: 0, paddingLeft: 18, display: "grid", gap: 8 }} className="small">
             <li>Very small waste on a big meter (for example 6 kW at a 600 kW hotel), unless a sub-meter isolates that equipment.</li>
-            <li>Tomorrow's laundry and water-heating schedule. Until those are shared, power-limit risk is shown as a "what if they overlap" scenario.</li>
+            <li>Tomorrow's laundry and water-heating schedule, and the events calendar. Until those are connected, power-limit risk is shown as a "what if they overlap" scenario, and events are entered by hand in Plan ahead.</li>
+            <li>Live meter readings. Until the hotels' meters are connected, the Today page replays the sample feed from the same weekday last year.</li>
             <li>Equipment with no sub-meter (8–14% of the electricity). That needs a walk-through.</li>
           </ul>
         </div>

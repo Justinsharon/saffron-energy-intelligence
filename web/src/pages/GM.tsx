@@ -32,6 +32,8 @@ function sentence(group: string, v: number, c: BillChange["context"], d: BillCha
   }
 }
 
+function addMonth(m: string) { const [y, mo] = m.split("-").map(Number); return mo === 12 ? `${y + 1}-01` : `${y}-${String(mo + 1).padStart(2, "0")}`; }
+
 export default function GM() {
   const { now } = useClock();
   const bills = useData<Bills>("bills.json");
@@ -40,7 +42,9 @@ export default function GM() {
   const [site, setSite] = useState<Site>("GGN");
   const months = useMemo(() => bills ? bills.recon.filter((r) => r.site === site).map((r) => r.month).sort() : [], [bills, site]);
   const nowM = now.slice(0, 7);
-  const defB = months.includes(nowM) && months.indexOf(nowM) > 0 ? nowM : "2026-05";
+  const lastM = months[months.length - 1];
+  const pending = !!lastM && nowM > lastM;
+  const defB = months.includes(nowM) && months.indexOf(nowM) > 0 ? nowM : pending ? lastM : "2026-05";
   const [b, setB] = useState(defB);
   const [a, setA] = useState(months[months.indexOf(defB) - 1] ?? "2026-04");
   useEffect(() => { setB(defB); setA(months[months.indexOf(defB) - 1] ?? "2026-04"); }, [site, nowM, months.length]);
@@ -64,7 +68,7 @@ export default function GM() {
       <div className="page-head">
         <div>
           <h1>Why the electricity bill changed</h1>
-          <p className="lead">Pick two months to see where the difference came from: weather, guests, events, wasted energy, peak-demand charges or the diesel generator. The pieces add up exactly to the two bills.</p>
+          <p className="lead">Pick two months to see where the difference came from: weather, guests, events, wasted energy, peak-demand charges or the diesel generator. The pieces add up exactly to the two bills.{pending ? ` The latest bill is ${fmtMonth(lastM)}; bills from ${fmtMonth(addMonth(lastM))} onward have not been received yet.` : ""}</p>
         </div>
         <SiteSwitch value={site} onChange={(s) => setSite(s as Site)} all={false} />
       </div>

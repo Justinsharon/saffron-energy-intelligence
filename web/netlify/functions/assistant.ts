@@ -70,7 +70,36 @@ function plainMeasure(m: string): string {
   return m;
 }
 const PLAIN_DRIVER: Record<string, string> = { Weather: "weather", Occupancy: "guests in house", Events: "events", Calendar: "days in the month", Anomalies: "waste and faults (incl. capacitor panel)", Demand: "peak-demand charges", Diesel: "diesel generator", "Tariff mix": "time-of-day pricing", Unexplained: "not explained" };
-const TOOLS: Record<string, { fn: (a: J) => J; desc: string; params: Record<string, string> }> = {
+// Live context, set per request: today's date in India and where the site's own static files live.
+let ORIGIN = "";
+const istToday = () => new Date(Date.now() + 5.5 * 3.6e6).toISOString().slice(0, 10);
+const addDays = (d: string, k: number) => new Date(Date.parse(d + "T00:00:00Z") + k * 864e5).toISOString().slice(0, 10);
+async function ggnTmax(date: string): Promise<number | null> {
+  try {
+    const r = await fetch(`https://api.open-meteo.com/v1/forecast?latitude=28.46&longitude=77.03&daily=temperature_2m_max&timezone=Asia%2FKolkata&forecast_days=16`);
+    const j = await r.json(); const k = (j.daily?.time ?? []).indexOf(date); return k >= 0 ? j.daily.temperature_2m_max[k] : null;
+  } catch { return null; }
+}
+
+const TOOLS: Record<string, { fn: (a: J) => J | Promise<J>; desc: string; params: Record<string, string> }> = {
+  forecast_upcoming: {
+    desc: "Gurugram peak power demand for tomorrow or another upcoming date (real weather forecast), with any conference the user mentions; contract-demand risk and what to move.",
+    params: { date: "string YYYY-MM-DD, optional (default tomorrow)", conference_guests: "integer, optional", max_temp_c: "string number, optional: only if the user gives a temperature" },
+    fn: async (a) => {
+      const date = a.date || addDays(istToday(), 1);
+      let d: J;
+      try { const r = await fetch(`${ORIGIN}/data/live/${date}.json`); if (!r.ok) throw new Error(); d = await r.json(); }
+      catch { return { error: `No forecast prepared for ${date} yet (forecasts cover the coming weeks).` }; }
+      const fc = a.max_temp_c ? Number(a.max_temp_c) : await ggnTmax(date);
+      const t0 = Math.round(fc ?? d.template_tmax);
+      const t = Math.min(d.temps[d.temps.length - 1], Math.max(d.temps[0], t0));
+      const gIn = Number(a.conference_guests) || 0;
+      const g = d.guests.reduce((b: number, x: number) => (Math.abs(x - gIn) < Math.abs(b - gIn) ? x : b), 0);
+      const c = d.grid[`${t}|${g}`];
+      return { hotel: "Gurugram", date, top_temperature_c: t, temperature_source: a.max_temp_c ? "given by you" : fc != null ? "weather forecast" : "typical for the time of year",
+        conference_guests: g, note: g !== gIn ? "guest count rounded to the nearest 100" : undefined, ...riskOut({ risk: c.risk, plan: c.plan }) };
+    },
+  },
   explain_bill_change: {
     desc: "Split the change between two monthly bills of one hotel into weather, occupancy, events, calendar, anomalies (incl. PF), demand, diesel, tariff mix. Months as YYYY-MM.",
     params: { site: "string: GGN/JAI/GOA or hotel name", month_a: "string YYYY-MM", month_b: "string YYYY-MM" },
@@ -157,7 +186,8 @@ post-hoc, held-out, Shapley, kVAh, MD, CD, ToD, PF, APFC, CHW, AHU, BMS, TR or k
 "evening peak hours", "capacitor panel", "chilled water", "air handlers", "building control system"). Name drivers as the tools do. Never print tool field names, codes or capitalised labels such as BREACH RISK; say "risk of going over the power limit".
 Don't mention the power factor by name; say "the capacitor panel fault made the utility bill for more electricity than was used". Use "chilled water set too cold", not "setpoint".
 You only recommend; a person approves every action. Never suggest automatic control of kitchen exhaust, guest-room thermostats, lifts or life-safety,
-and never a chilled-water setpoint below 6.5 °C. "Tomorrow" questions with a temperature use forecast_scenario. The latest month in the data is 2026-09.`;
+and never a chilled-water setpoint below 6.5 °C. Questions about tomorrow or a coming date use forecast_upcoming (real weather forecast). forecast_scenario is a what-if for a hot weekday in May; forecast_day is for past dates.`;
+const system = () => `${SYSTEM}\nToday is ${istToday()} (India). Meter data and bills run from Oct 2025 to Sep 2026; bills from Oct 2026 have not been received yet, so say so if asked about them.`;
 
 // ---------- 3. number check ----------
 function numbers(t: string): number[] {
@@ -192,7 +222,8 @@ function route(q: string): [string, J][] {
     return [["explain_bill_change", { site: s, month_a: a, month_b: b }]];
   }
   if (/bill|reconcil|provisional/.test(ql)) return [["bill_reconciliation", { site: s, month: ym[0] }]];
-  if (/forecast|risk|tomorrow|peak|kva/.test(ql)) { const d = q.match(/20\d\d-\d\d-\d\d/); return [["forecast_day", { date: d ? d[0] : "2026-06-18" }]]; }
+  if (/tomorrow|next week|upcoming/.test(ql)) { const g = ql.match(/(\d{2,4})\s*(?:-|\s)?(?:guest|people|pax|delegate)/); return [["forecast_upcoming", { conference_guests: g ? Number(g[1]) : 0 }]]; }
+  if (/forecast|risk|peak|kva/.test(ql)) { const d = q.match(/20\d\d-\d\d-\d\d/); return [[d && d[0] > "2026-09-30" ? "forecast_upcoming" : "forecast_day", { date: d ? d[0] : "2026-06-18" }]]; }
   if (/saving|save/.test(ql)) return [["savings_plan", {}]];
   return [["list_alerts", { site: s }]];
 }
@@ -208,7 +239,7 @@ function template(calls: [string, J, J][]): string {
       ? `${r.hotel}, ${x.month}: this is an estimated bill. It charges ${f(x.billed_total)}, but our meter puts it at ${f(x.corrected_total)}, so it is about ${f(x.billed_minus_corrected)} too high. Ask the utility for a bill on the actual meter reading.`
       : x.status === "Meter fault" ? `${r.hotel}, ${x.month}: billed ${f(x.billed_total)} using faulty meter readings; on our corrected reading it would be ${f(x.corrected_total)}.`
       : `${r.hotel}, ${x.month}: billed ${f(x.billed_total)}, which matches our meter.`);
-    else if (n === "forecast_day" || n === "forecast_scenario") { p.push(`${r.date ?? r.scenario}: expected peak ${r.forecast_peak_kva} kVA around ${r.peak_hour}:00 (limit 1,000 kVA); ${r.chance_above_1000_kva_pct}% chance of going over. If laundry, water heating and banquet cooling overlap that afternoon it could reach ${r.if_laundry_water_heating_and_banquet_cooling_overlap_kva} kVA.${r.shift_plan ? " Suggested moves:" : ""}`); for (const s of r.shift_plan ?? []) p.push(`- ${s.action} (frees about ${s.frees_up_kva} kVA)`); }
+    else if (n === "forecast_day" || n === "forecast_scenario" || n === "forecast_upcoming") { p.push(`${r.scenario ?? r.date}${r.top_temperature_c != null ? ` (top ${r.top_temperature_c} °C)` : ""}: expected peak ${r.forecast_peak_kva} kVA around ${r.peak_hour}:00 (limit 1,000 kVA); ${r.chance_above_1000_kva_pct}% chance of going over. If laundry, water heating and banquet cooling overlap that afternoon it could reach ${r.if_laundry_water_heating_and_banquet_cooling_overlap_kva} kVA.${r.shift_plan ? " Suggested moves:" : ""}`); for (const s of r.shift_plan ?? []) p.push(`- ${s.action} (frees about ${s.frees_up_kva} kVA)`); }
     else if (n === "savings_plan") { p.push(`We can save about ${f(r.total_inr)} a year, ${r.pct_of_group_bill}% of the electricity bill (${r.with_capital_note_pct}% with investments). The biggest items:`); for (const m of [...r.measures].sort((a: J, b: J) => b.inr - a.inr).slice(0, 6)) p.push(`- ${m.hotel}: ${m.measure}: ${f(m.inr)} a year`); }
   }
   return p.join("\n");
@@ -222,40 +253,42 @@ export default async (req: Request) => {
   if (!q.trim()) return Response.json({ error: "Ask a question." }, { status: 400 });
   const g = guard(q);
   if (g) return Response.json({ text: g, mode: "Safety rule" });
-  const run = (n: string, a: J): J => { try { return TOOLS[n].fn(a); } catch (e) { return { error: String(e) }; } };
+  ORIGIN = process.env.URL || new URL(req.url).origin;
+  const run = async (n: string, a: J): Promise<J> => { try { return await TOOLS[n].fn(a); } catch (e) { return { error: String(e) }; } };
+  const runAll = (q2: string) => Promise.all(route(q2).map(async ([n, a]) => [n, a, await run(n, a)] as [string, J, J]));
   const key = process.env.ANTHROPIC_API_KEY;
-  if (!key) { const calls = route(q).map(([n, a]) => [n, a, run(n, a)] as [string, J, J]); return Response.json({ text: template(calls), mode: "Quick answer" }); }
+  if (!key) { const calls = await runAll(q); return Response.json({ text: template(calls), mode: "Quick answer" }); }
 
   const client = new Anthropic({ apiKey: key });
   const hist = Array.isArray(body.history) ? body.history.filter((m: J) => m && (m.role === "user" || m.role === "assistant") && typeof m.content === "string").slice(-6) : [];
   const msgs: J[] = [...hist, { role: "user", content: q }];
   const calls: [string, J, J][] = [];
   try {
-    let resp = await client.messages.create({ model: MODEL, max_tokens: 1200, system: SYSTEM, tools: schemas as any, messages: msgs as any });
+    let resp = await client.messages.create({ model: MODEL, max_tokens: 1200, system: system(), tools: schemas as any, messages: msgs as any });
     for (let i = 0; i < 5 && resp.stop_reason === "tool_use"; i++) {
       msgs.push({ role: "assistant", content: resp.content });
       const results: J[] = [];
       for (const b of resp.content as J[]) if (b.type === "tool_use") {
         const a = Object.fromEntries(Object.entries(b.input ?? {}).filter(([, v]) => v !== null && v !== ""));
-        const r = TOOLS[b.name] ? run(b.name, a) : { error: "unknown tool" };
+        const r = TOOLS[b.name] ? await run(b.name, a) : { error: "unknown tool" };
         calls.push([b.name, a, r]); results.push({ type: "tool_result", tool_use_id: b.id, content: JSON.stringify(r) });
       }
       msgs.push({ role: "user", content: results });
-      resp = await client.messages.create({ model: MODEL, max_tokens: 1200, system: SYSTEM, tools: schemas as any, messages: msgs as any });
+      resp = await client.messages.create({ model: MODEL, max_tokens: 1200, system: system(), tools: schemas as any, messages: msgs as any });
     }
     let text = (resp.content as J[]).filter((b) => b.type === "text").map((b) => b.text).join("").trim();
     const facts = JSON.stringify(calls.map((c) => c[2]));
     let bad = unverified(text, facts, q);
     if (bad.length) {
       msgs.push({ role: "assistant", content: resp.content }, { role: "user", content: `Rewrite your answer. These numbers do not appear in the tool results: ${bad.slice(0, 8).join(", ")}. Do not add, subtract, total or convert numbers yourself; quote only figures exactly as the tools returned them.` });
-      resp = await client.messages.create({ model: MODEL, max_tokens: 1200, system: SYSTEM, tools: schemas as any, messages: msgs as any });
+      resp = await client.messages.create({ model: MODEL, max_tokens: 1200, system: system(), tools: schemas as any, messages: msgs as any });
       text = (resp.content as J[]).filter((b) => b.type === "text").map((b) => b.text).join("").trim();
       bad = unverified(text, facts, q);
     }
     if (bad.length) return Response.json({ text: calls.length ? template(calls) : "I could not verify the figures for that answer.", mode: "Figures straight from the data" });
     return Response.json({ text, mode: "Every figure checked against the hotel data", tools: calls.map((c) => c[0]) });
   } catch (e) {
-    const fallback = route(q).map(([n, a]) => [n, a, run(n, a)] as [string, J, J]);
+    const fallback = await runAll(q);
     return Response.json({ text: template(fallback), mode: "Quick answer (the detailed assistant is busy)" });
   }
 };

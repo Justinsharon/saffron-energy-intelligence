@@ -2,7 +2,7 @@ import { useMemo, useState } from "react";
 import { Bar, BarChart, CartesianGrid, ComposedChart, Line, ReferenceArea, ResponsiveContainer, Tooltip, XAxis, YAxis, Cell, LabelList } from "recharts";
 import { Status } from "../components/parts";
 import { SITES, SITE_NAME, useData, type Bills, type Recon, type Savings, type Site } from "../data";
-import { fmtMonth, inr, n } from "../format";
+import { fmtMonth, inr, istNow, n } from "../format";
 import { SiteSwitch } from "./Shift";
 import { CATEGORY, CONFIDENCE, measureGroup, measureName } from "../copy";
 
@@ -20,6 +20,13 @@ export default function Finance() {
   const rows = bills ? bills.recon.filter((r) => r.site === site).sort((a, b) => a.month.localeCompare(b.month)) : [];
   const pick: Recon | undefined = rows.find((r) => r.month === sel) ?? rows.find((r) => r.status !== "Reconciled") ?? rows[0];
   const all = bills?.recon ?? [];
+  // Months since the last bill on file, up to last month: shown as awaited so the ledger runs to today.
+  const awaited: string[] = [];
+  if (rows.length) {
+    let [y, m] = rows[rows.length - 1].month.split("-").map(Number);
+    const cur = istNow().slice(0, 7);
+    for (;;) { m === 12 ? (y++, m = 1) : m++; const k = `${y}-${String(m).padStart(2, "0")}`; if (k >= cur) break; awaited.push(k); }
+  }
   const counts = { rec: all.filter((r) => r.status === "Reconciled").length, fault: all.filter((r) => r.status === "Meter fault").length, prov: all.filter((r) => r.status === "Provisional").length };
 
   return (
@@ -42,6 +49,8 @@ export default function Finance() {
                 <td className="r" style={{ color: Math.abs(r.billed_minus_corrected) > 1000 ? "var(--red)" : "var(--ink-3)" }}>{Math.abs(r.billed_minus_corrected) < 1 ? "—" : (r.billed_minus_corrected > 0 ? "+" : "−") + inr(Math.abs(r.billed_minus_corrected), { exact: true })}</td>
                 <td className="r">{n(r.md_kva)} kVA</td>
               </tr>
+            ))}{awaited.map((k) => (
+              <tr key={k}><td className="nw">{fmtMonth(k)}</td><td className="nw muted small">Bill not received yet</td><td className="r muted">—</td><td className="r muted">—</td><td className="r muted">—</td></tr>
             ))}</tbody>
           </table>
           <p className="muted small" style={{ marginBottom: 0 }}>Peak-demand charges: the hotel pays for its highest power draw of the month, but never less than 75% of its contracted limit. Anything above the limit is charged again as a penalty.</p>

@@ -43,12 +43,14 @@ def day_view(date) -> tuple[pd.DataFrame, dict]:
     return w, assess(w.pred_kva.reset_index(drop=True), w.hour.reset_index(drop=True), before=pd.Timestamp(date))
 
 
-def scenario(date, tmax: float, guests: int, start_h: int = 9, end_h: int = 18) -> tuple[pd.DataFrame, dict]:
+def scenario(date, tmax: float, guests: int, start_h: int = 9, end_h: int = 18, clear_events: bool = False) -> tuple[pd.DataFrame, dict]:
     """Template day `date` with its temperature shifted so the max is `tmax`, plus a conference of `guests` (T7)."""
     s = state()
     t = s["d"].copy()
     m = t.date == pd.Timestamp(date)
     t.loc[m, "temp_c"] = t.loc[m, "temp_c"] + (tmax - t.loc[m, "temp_c"].max())
+    if clear_events:  # live forecasts: last year's bookings on the template day say nothing about this year's
+        t.loc[m, [c for c in t.columns if c.startswith("ev_")]] = 0
     t = F.thermal_features(t)
     if guests:
         t.loc[m & t.hour.between(start_h - 1, end_h), ["ev_guests", "ev_corp"]] = guests

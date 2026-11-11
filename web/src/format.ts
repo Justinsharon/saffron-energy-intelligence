@@ -46,3 +46,15 @@ export function hours(h: number): string {
 export function iso(d: Date): string {
   return d.toISOString().slice(0, 16);
 }
+
+/** Real wall-clock time in India, as "YYYY-MM-DDTHH:MM" (the same convention as the data). */
+export function istNow(): string {
+  return new Date(Date.now() + 5.5 * 3.6e6).toISOString().slice(0, 16);
+}
+export function addMs(t: string, ms: number): string {
+  return iso(new Date(parse(t).getTime() + ms));
+}
+export const DAY_MS = 864e5;
+/** The sample meter feed covers Oct 2025 – Sep 2026. Live days replay the same weekday 52 weeks earlier. */
+export const FEED_OFFSET_MS = 364 * DAY_MS;
+export const DATA_FIRST = "2025-10-01", DATA_LAST = "2026-09-30";

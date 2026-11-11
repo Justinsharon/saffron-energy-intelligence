@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { CartesianGrid, ComposedChart, Line, ReferenceArea, ResponsiveContainer, Tooltip, XAxis, YAxis, Bar, Cell, ReferenceLine, LabelList } from "recharts";
 import type { Alert } from "../data";
 import { fmtDT, hours, inr, n, parse } from "../format";
-import { BILL_STATUS, PRIORITY, RULE, SAFETY } from "../copy";
+import { BILL_STATUS, EQUIPMENT, PRIORITY, RULE, SAFETY } from "../copy";
 
 /** Equipment tag plate: the label engraved on the plant item the alert is about. */
 const TAG: Record<string, [string, string]> = {
@@ -155,7 +155,7 @@ export function Ticket({ a, now, onAck, acked, defaultOpen = false }: { a: Alert
           <dl className="facts">
             <dt>Cost so far</dt><dd>{a.cost > 0 ? (a.cost_basis === "per_day" ? <>{inr(live ? costSoFar : a.cost)} ({inr(a.per_hour)} an hour)</> : inr(a.cost)) : "Not significant"}</dd>
             <dt>Spotted</dt><dd>{fmtDT(a.alert_time)}, about {n(Math.max(1, a.detect_lag_h))} hour{Math.round(a.detect_lag_h) > 1 ? "s" : ""} after it started</dd>
-            <dt>Equipment</dt><dd>{a.equipment}</dd>
+            <dt>Equipment</dt><dd>{EQUIPMENT[a.equipment] ?? a.equipment}</dd>
           </dl>
           <Evidence a={a} upto={live ? now : undefined} />
           <details className="more-info"><summary>Meter readings for the engineer</summary><p className="tech">{a.evidence}.{a.inferred_note ? ` ${a.inferred_note}` : ""}</p></details>

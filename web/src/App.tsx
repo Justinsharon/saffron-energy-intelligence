@@ -7,7 +7,7 @@ import Finance from "./pages/Finance";
 import Ask from "./pages/Ask";
 import Rate from "./pages/Rate";
 import Method from "./pages/Method";
-import { fmtDT } from "./format";
+import { addMs, DATA_FIRST, DATA_LAST, FEED_OFFSET_MS, fmtDT, istNow } from "./format";
 
 const I = (d: string) => <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden><path d={d} /></svg>;
 const ICON: Record<string, ReactNode> = {
@@ -36,8 +36,10 @@ const MORE = [
 type PageId = (typeof PAGES)[number]["id"] | (typeof MORE)[number]["id"];
 const OLD: Record<string, PageId> = { shift: "today", engineering: "equipment", gm: "costs", finance: "bills", rate: "feedback", method: "accuracy" };
 
-interface Clock { now: string; setNow: (s: string) => void; go: (p: PageId) => void }
-const Ctx = createContext<Clock>({ now: "2026-05-24T10:00", setNow: () => {}, go: () => {} });
+/** `now` is what the screen calls "now"; `dataNow` is the matching hour in the meter data. Live: today, replayed from the same
+ *  weekday 52 weeks earlier (the sample feed ends 30 Sep 2026). Looking back: a past hour, shown as it was (offset 0). */
+interface Clock { now: string; dataNow: string; offset: number; live: boolean; setNow: (s: string | null) => void; go: (p: PageId) => void }
+const Ctx = createContext<Clock>({ now: istNow(), dataNow: addMs(istNow(), -FEED_OFFSET_MS), offset: FEED_OFFSET_MS, live: true, setNow: () => {}, go: () => {} });
 export const useClock = () => useContext(Ctx);
 
 function readHash(): PageId {
@@ -48,12 +50,18 @@ function readHash(): PageId {
 
 export default function App() {
   const [page, setPage] = useState<PageId>(readHash());
-  const [now, setNow] = useState("2026-05-24T10:00");
+  const [real, setReal] = useState(istNow());
+  const [past, setPast] = useState<string | null>(null);
+  useEffect(() => { const t = setInterval(() => setReal(istNow()), 30e3); return () => clearInterval(t); }, []);
   useEffect(() => { const f = () => setPage(readHash()); window.addEventListener("hashchange", f); return () => window.removeEventListener("hashchange", f); }, []);
   const go = (p: PageId) => { window.location.hash = `#/${p}`; setPage(p); window.scrollTo(0, 0); };
+  const live = past == null;
+  const now = past ?? real;
+  const offset = live ? FEED_OFFSET_MS : 0;
+  const clock: Clock = { now, dataNow: addMs(now, -offset), offset, live, setNow: setPast, go };
   const date = now.slice(0, 10), hour = Number(now.slice(11, 13));
   return (
-    <Ctx.Provider value={{ now, setNow, go }}>
+    <Ctx.Provider value={clock}>
       <div className="shell">
         <aside className="side">
           <div className="brand">
@@ -76,14 +84,25 @@ export default function App() {
         </aside>
         <div className="content">
           <div className="topline">
-            <span className="muted small">Showing</span>
-            <strong className="small">{fmtDT(now)}</strong>
+            {live ? <span className="live-dot" aria-hidden /> : null}
+            <span className="muted small">{live ? "Live" : "Looking back at"}</span>
+            <strong className="small">{fmtDT(now)}{live ? " IST" : ""}</strong>
             <span className="when">
-              <input aria-label="Date" type="date" min="2025-10-01" max="2026-09-30" value={date}
-                     onChange={(e) => e.target.value && setNow(`${e.target.value}T${String(hour).padStart(2, "0")}:00`)} />
-              <select aria-label="Time" value={hour} onChange={(e) => setNow(`${date}T${e.target.value.padStart(2, "0")}:00`)}>
-                {Array.from({ length: 24 }, (_, h) => <option key={h} value={h}>{String(h).padStart(2, "0")}:00</option>)}
-              </select>
+              {live ? (
+                <label className="small muted">Look back
+                  <input aria-label="Look back to a past day" type="date" min={DATA_FIRST} max={DATA_LAST} value=""
+                         onChange={(e) => e.target.value && setPast(`${e.target.value}T10:00`)} style={{ marginLeft: 6 }} />
+                </label>
+              ) : (
+                <>
+                  <input aria-label="Date" type="date" min={DATA_FIRST} max={DATA_LAST} value={date}
+                         onChange={(e) => e.target.value && setPast(`${e.target.value}T${String(hour).padStart(2, "0")}:00`)} />
+                  <select aria-label="Time" value={hour} onChange={(e) => setPast(`${date}T${e.target.value.padStart(2, "0")}:00`)}>
+                    {Array.from({ length: 24 }, (_, h) => <option key={h} value={h}>{String(h).padStart(2, "0")}:00</option>)}
+                  </select>
+                  <button className="btn" onClick={() => setPast(null)}>Back to today</button>
+                </>
+              )}
             </span>
           </div>
           <main>
@@ -97,7 +116,7 @@ export default function App() {
             {page === "accuracy" && <Method />}
           </main>
           <footer className="foot">
-            <span>Demo with sample data for Saffron Suites (Oct 2025 – Sep 2026); tariff rates are illustrative. Every change is recommended, never made automatically.</span>
+            <span>Live date and weather. Meter readings are a sample feed (Oct 2025 – Sep 2026), replayed from the same weekday last year until the hotels' meters are connected. Tariff rates are illustrative. Every change is recommended, never made automatically.</span>
           </footer>
         </div>
       </div>

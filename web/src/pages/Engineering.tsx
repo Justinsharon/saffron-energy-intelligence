@@ -2,7 +2,7 @@ import { useMemo, useState } from "react";
 import { useClock } from "../App";
 import { Ticket } from "../components/parts";
 import { SITE_NAME, useData, type Alert, type Fault, type Quality, type Site } from "../data";
-import { fmtD, fmtDT, inr, n, parse, pct } from "../format";
+import { DATA_LAST, fmtD, fmtDT, inr, n, parse, pct } from "../format";
 import { SiteSwitch } from "./Shift";
 import { RULE } from "../copy";
 const T = (a: Alert) => RULE[a.rule]?.title ?? a.title;
@@ -12,7 +12,9 @@ const WEEKS = 53;
 function week(t: string) { return Math.floor((parse(t).getTime() - START) / (7 * 864e5)); }
 
 export default function Engineering() {
-  const { now } = useClock();
+  const { now: shown, live } = useClock();
+  // History page: live, it covers the 12 months of meter data; looking back, everything up to that moment.
+  const now = live ? `${DATA_LAST}T23:59` : shown;
   const alerts = useData<Alert[]>("alerts.json");
   const faults = useData<Fault[]>("faults.json");
   const q = useData<Quality>("quality.json");
@@ -44,7 +46,7 @@ export default function Engineering() {
       <div className="page-head">
         <div>
           <h1>Equipment patterns</h1>
-          <p className="lead">Which problems keep coming back, what they cost, and how quickly they are spotted. Fix the cause of a repeat problem, not each occurrence.</p>
+          <p className="lead">Which problems keep coming back, what they cost, and how quickly they are spotted. Fix the cause of a repeat problem, not each occurrence.{live ? " Covers the 12 months of meter data, October 2025 to September 2026." : ""}</p>
         </div>
         <SiteSwitch value={site} onChange={(s) => { setSite(s); setSel(null); }} />
       </div>

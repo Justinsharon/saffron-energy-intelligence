@@ -20,7 +20,8 @@ function Rich({ text }: { text: string }) {
 interface Msg { role: "user" | "assistant"; content: string; via?: string }
 const PROMPTS = [
   "Why was Gurugram's May 2026 bill higher than April's?",
-  "Tomorrow is 40 °C with a 300-guest conference. Will we go over the power limit?",
+  "We have a 300-guest conference at Gurugram tomorrow. Will we go over the power limit?",
+  "What if it's 40 °C with a 300-guest conference?",
   "Is the Goa July 2026 bill right?",
   "What is wasting the most money at Jaipur?",
   "Switch off the kitchen extract fans automatically at night",
