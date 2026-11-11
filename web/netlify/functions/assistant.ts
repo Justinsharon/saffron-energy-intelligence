@@ -124,7 +124,11 @@ const schemas = Object.entries(TOOLS).map(([name, t]) => ({
 const SYSTEM = `You are the energy assistant for Saffron Suites (fictional hotels: Gurugram, Jaipur, Goa; data Oct 2025 - Sep 2026; tariffs are illustrative).
 Users are duty engineers, the chief engineer, the GM and finance. Answer using ONLY numbers returned by the tools - never compute, add up, subtract, total, round differently,
 estimate or invent numbers (a sum of several drivers is NOT allowed unless a tool returned it); quote them as given (you may format with ₹ and thousands separators).
-If the tools do not cover the question, say what the product can show instead. Be brief: lead with the answer, then 3-6 short points with the ₹ drivers. Plain text, no markdown headings.
+If the tools do not cover the question, say what the app can show instead. Be brief: lead with the answer, then 3-6 short points with the ₹ drivers. Plain text, no headings.
+Write for hotel managers and engineers, not data scientists: plain business English, no jargon. Never use words like model, baseline, residual, anomaly label,
+post-hoc, held-out, Shapley, kVAh, MD, CD, ToD, PF, APFC, CHW, AHU, BMS, TR or kW/TR without explaining them in everyday words (say "peak power demand", "contracted power limit",
+"evening peak hours", "capacitor panel", "chilled water", "air handlers", "building control system"). Name drivers as: weather, guests in house, events, days in the month,
+waste and faults, peak-demand charges, diesel generator, time-of-day pricing, not explained.
 You only recommend; a person approves every action. Never suggest automatic control of kitchen exhaust, guest-room thermostats, lifts or life-safety,
 and never a chilled-water setpoint below 6.5 °C. "Tomorrow" questions with a temperature use forecast_scenario. The latest month in the data is 2026-09.`;
 
@@ -168,12 +172,13 @@ function route(q: string): [string, J][] {
 function template(calls: [string, J, J][]): string {
   const p: string[] = [];
   const f = (x: number) => `₹${Math.round(x).toLocaleString("en-IN")}`;
+  const D: Record<string, string> = { Weather: "Weather", Occupancy: "Guests in house", Events: "Events", Calendar: "Days in the month", Anomalies: "Waste and faults", Demand: "Peak-demand charges", Diesel: "Diesel generator", "Tariff mix": "Time-of-day pricing", Unexplained: "Not explained" };
   for (const [n, , r] of calls) {
     if (r.error) { p.push(r.error); continue; }
-    if (n === "explain_bill_change") { p.push(`${r.hotel} bill ${r.month_b} vs ${r.month_a}: ${f(r.bill_b_inr)} vs ${f(r.bill_a_inr)} (change ${f(r.change_inr)}). By driver:`); for (const [k, v] of Object.entries(r.change_by_driver_inr as Record<string, number>).sort((x, y) => Math.abs(y[1]) - Math.abs(x[1]))) p.push(`- ${k}: ${v >= 0 ? "+" : "−"}${f(Math.abs(v))}`); }
+    if (n === "explain_bill_change") { p.push(`${r.hotel}'s bill for ${r.month_b} was ${f(r.bill_b_inr)}, against ${f(r.bill_a_inr)} for ${r.month_a}, a change of ${f(r.change_inr)}. Where it came from:`); for (const [k, v] of Object.entries(r.change_by_driver_inr as Record<string, number>).sort((x, y) => Math.abs(y[1]) - Math.abs(x[1]))) p.push(`- ${D[k] ?? k}: ${v >= 0 ? "+" : "−"}${f(Math.abs(v))}`); }
     else if (n === "list_alerts") { p.push(`Top ${r.n} alerts by ₹:`); for (const a of r.alerts) p.push(`- ${a.hotel} · ${a.title} from ${a.start} (${a.hours} h), ${f(a.inr)}. ${a.action}`); }
     else if (n === "bill_reconciliation") for (const x of r.rows) p.push(`- ${x.month}: ${x.status} — billed ${f(x.billed_total)}. ${x.note}`);
-    else if (n === "forecast_day" || n === "forecast_scenario") { p.push(`${r.date ?? r.scenario}: forecast peak ${r.forecast_peak_kva} kVA at ${r.peak_hour}:00, chance above 1,000 kVA ${r.chance_above_1000_kva_pct}%, if shiftable loads stack ${r.stacking_scenario_kva} kVA. Risk ${r.risk}. ${r.reason}`); for (const s of r.shift_plan ?? []) p.push(`- ${s.action} (≈${s.relief_kva} kVA)`); }
+    else if (n === "forecast_day" || n === "forecast_scenario") { p.push(`${r.date ?? r.scenario}: expected peak ${r.forecast_peak_kva} kVA around ${r.peak_hour}:00 (limit 1,000 kVA); ${r.chance_above_1000_kva_pct}% chance of going over. If laundry, water heating and banquet cooling overlap that afternoon it could reach ${r.stacking_scenario_kva} kVA.${r.shift_plan ? " Suggested moves:" : ""}`); for (const s of r.shift_plan ?? []) p.push(`- ${s.action} (≈${s.relief_kva} kVA)`); }
     else if (n === "savings_plan") { p.push(`Identified savings ${f(r.total_inr)} (${r.pct_of_group_bill}% of the group bill; ${r.with_capital_note_pct}% with capital items):`); for (const m of r.measures) p.push(`- ${m.hotel} · ${m.measure}: ${f(m.inr)} (${m.category})`); }
   }
   return p.join("\n");
@@ -186,10 +191,10 @@ export default async (req: Request) => {
   const q = String(body.question ?? "").slice(0, 1000);
   if (!q.trim()) return Response.json({ error: "Ask a question." }, { status: 400 });
   const g = guard(q);
-  if (g) return Response.json({ text: g, mode: "Safety rule · answered without the model" });
+  if (g) return Response.json({ text: g, mode: "Safety rule" });
   const run = (n: string, a: J): J => { try { return TOOLS[n].fn(a); } catch (e) { return { error: String(e) }; } };
   const key = process.env.ANTHROPIC_API_KEY;
-  if (!key) { const calls = route(q).map(([n, a]) => [n, a, run(n, a)] as [string, J, J]); return Response.json({ text: template(calls), mode: "Rules engine (no API key)" }); }
+  if (!key) { const calls = route(q).map(([n, a]) => [n, a, run(n, a)] as [string, J, J]); return Response.json({ text: template(calls), mode: "Quick answer" }); }
 
   const client = new Anthropic({ apiKey: key });
   const hist = Array.isArray(body.history) ? body.history.filter((m: J) => m && (m.role === "user" || m.role === "assistant") && typeof m.content === "string").slice(-6) : [];
@@ -217,10 +222,10 @@ export default async (req: Request) => {
       text = (resp.content as J[]).filter((b) => b.type === "text").map((b) => b.text).join("").trim();
       bad = unverified(text, facts, q);
     }
-    if (bad.length) return Response.json({ text: calls.length ? template(calls) : "I could not verify the figures for that answer.", mode: "Template answer (the model's text had numbers not found in the data)" });
-    return Response.json({ text, mode: `Claude · every number checked against the models`, tools: calls.map((c) => c[0]) });
+    if (bad.length) return Response.json({ text: calls.length ? template(calls) : "I could not verify the figures for that answer.", mode: "Figures straight from the data" });
+    return Response.json({ text, mode: "Every figure checked against the hotel data", tools: calls.map((c) => c[0]) });
   } catch (e) {
     const fallback = route(q).map(([n, a]) => [n, a, run(n, a)] as [string, J, J]);
-    return Response.json({ text: template(fallback), mode: `Rules engine (Claude unavailable: ${String((e as Error).message ?? e).slice(0, 80)})` });
+    return Response.json({ text: template(fallback), mode: "Quick answer (the detailed assistant is busy)" });
   }
 };

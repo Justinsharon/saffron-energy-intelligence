@@ -5,24 +5,30 @@ import { Waterfall } from "../components/parts";
 import { SITE_NAME, useData, type Alert, type BillChange, type Bills, type Site } from "../data";
 import { fmtMonth, inr, n } from "../format";
 import { SiteSwitch } from "./Shift";
+import { DRIVER } from "../copy";
 
 const COMP_COLORS: Record<string, string> = {
   "Energy (kVAh)": "#22323d", "Demand charge": "#2b6c8f", "Excess-demand penalty": "#c4351f", "Fuel surcharge": "#7b8792",
   "Electricity duty": "#a9b4bb", "Municipal tax": "#cdd5d9", "ToD net": "#e3a23b", "Diesel (DG)": "#6b4c9a",
 };
 
+const COMP_NAME: Record<string, string> = {
+  "Energy (kVAh)": "Energy", "Demand charge": "Peak-demand charge", "Excess-demand penalty": "Over-limit penalty", "Fuel surcharge": "Fuel surcharge",
+  "Electricity duty": "Electricity duty", "Municipal tax": "Municipal tax", "ToD net": "Time-of-day adjustment", "Diesel (DG)": "Diesel generator",
+};
+
 function sentence(group: string, v: number, c: BillChange["context"], d: BillChange): string {
   const s = `${v >= 0 ? "added" : "saved"} ${inr(Math.abs(v))}`;
   switch (group) {
-    case "Weather": return `Weather ${s}: cooling degree-hours went from ${n(c.cdh_A)} to ${n(c.cdh_B)} and the hottest hour from ${c.tmax_A.toFixed(1)} to ${c.tmax_B.toFixed(1)} °C.`;
-    case "Occupancy": return `Occupancy ${s}: room-nights sold went from ${n(c.rooms_A)} to ${n(c.rooms_B)}.`;
+    case "Weather": return `Hotter or cooler weather ${s}. The hottest hour went from ${c.tmax_A.toFixed(0)} °C to ${c.tmax_B.toFixed(0)} °C, and the hotel needed ${c.cdh_B > c.cdh_A ? `${(c.cdh_B / Math.max(c.cdh_A, 1)).toFixed(1)}× as much` : "less"} cooling.`;
+    case "Occupancy": return `Guests ${s}: rooms sold went from ${n(c.rooms_A)} to ${n(c.rooms_B)} room-nights.`;
     case "Events": return `Events ${s}: event guests went from ${n(c.event_guests_A)} to ${n(c.event_guests_B)}.`;
-    case "Demand": return `Demand charges ${s}: the month's peak went from ${n(c.md_A)} to ${n(c.md_B)} kVA${c.md_B > 1000 ? ", above the 1,000 kVA contract, so a penalty applied" : ""}.`;
-    case "Anomalies": return `Waste and faults ${s}, including the power factor moving from ${c.pf_A.toFixed(3)} to ${c.pf_B.toFixed(3)}.`;
-    case "Calendar": return `The calendar ${s} (days in the month and weekday mix).`;
-    case "Diesel": return `Diesel generator hours ${s}.`;
-    case "Tariff mix": return `Peak and off-peak timing ${s}.`;
-    default: return `Unexplained by the model: ${inr(v)} (about ${Math.abs(v / d.bill_a * 100).toFixed(1)}% of the bill).`;
+    case "Demand": return `Peak-demand charges ${s}. The month's highest power draw went from ${n(c.md_A)} to ${n(c.md_B)} kVA${c.md_B > 1000 ? ", over the 1,000 kVA contract, which triggered a penalty" : ""}.`;
+    case "Anomalies": return `Equipment waste and faults ${s}${Math.abs(c.pf_B - c.pf_A) > 0.01 ? `, mostly from the capacitor panel fault that raised the bill by about ${Math.abs((1 / c.pf_B - 1 / c.pf_A) * c.pf_A * 100).toFixed(0)}%` : ""}.`;
+    case "Calendar": return `The number of days in the month ${s}.`;
+    case "Diesel": return `Running the diesel generator ${s}; diesel power costs about three times grid power.`;
+    case "Tariff mix": return `Using more or less power in the expensive evening hours ${s}.`;
+    default: return `About ${inr(Math.abs(v))} (${Math.abs(v / d.bill_a * 100).toFixed(1)}% of the bill) is not explained by weather, guests, events or known waste.`;
   }
 }
 
@@ -57,8 +63,8 @@ export default function GM() {
     <>
       <div className="page-head">
         <div>
-          <h1>Why the bill moved</h1>
-          <p className="lead">Each change is split by the hotel's own baseline model: what weather, bookings and events explain, and what is waste, demand or diesel. The pieces add up to the two issued bills exactly.</p>
+          <h1>Why the electricity bill changed</h1>
+          <p className="lead">Pick two months to see where the difference came from: weather, guests, events, wasted energy, peak-demand charges or the diesel generator. The pieces add up exactly to the two bills.</p>
         </div>
         <SiteSwitch value={site} onChange={(s) => setSite(s as Site)} all={false} />
       </div>
@@ -78,7 +84,7 @@ export default function GM() {
         <div className="split">
           <div className="panel">
             <Waterfall start={ch.bill_a} end={ch.bill_b} startLabel={fmtMonth(x)} endLabel={fmtMonth(y)}
-                       steps={steps.map(([k, v]) => ({ label: k, value: v }))} />
+                       steps={steps.map(([k, v]) => ({ label: DRIVER[k] ?? k, value: v }))} />
           </div>
           <div>
             <p style={{ fontSize: 19, lineHeight: 1.4, margin: "4px 0 12px" }}>
@@ -87,12 +93,12 @@ export default function GM() {
             <ol style={{ paddingLeft: 20, margin: 0, display: "grid", gap: 8 }}>
               {steps.slice(0, 4).map(([k, v]) => <li key={k}>{sentence(k, v, ch.context, ch)}</li>)}
             </ol>
-            <p className="muted small">Waste alerts raised in {fmtMonth(y)}: {inr(waste)} flagged. Ask the assistant for detail on any line.</p>
+            <p className="muted small">Waste spotted in {fmtMonth(y)}: {inr(waste)}. For more detail on any line, use Ask.</p>
           </div>
         </div>
       )}
 
-      <h2>Twelve months of bills, {SITE_NAME[site]}</h2>
+      <h2>The last twelve bills, {SITE_NAME[site]}</h2>
       <div className="panel">
         <ResponsiveContainer width="100%" height={300}>
           <BarChart data={monthly} margin={{ top: 8, right: 8, bottom: 0, left: 8 }}>
@@ -101,10 +107,10 @@ export default function GM() {
             <YAxis tickFormatter={(v) => inr(v)} tick={{ fontSize: 11, fill: "#7b8792" }} width={70} />
             <Tooltip formatter={(v: number) => inr(v, { exact: true })} />
             <Legend wrapperStyle={{ fontSize: 12 }} />
-            {Object.keys(COMP_COLORS).map((k) => <Bar key={k} dataKey={k} stackId="b" fill={COMP_COLORS[k]} isAnimationActive={false} />)}
+            {Object.keys(COMP_COLORS).map((k) => <Bar key={k} dataKey={k} name={COMP_NAME[k]} stackId="b" fill={COMP_COLORS[k]} isAnimationActive={false} />)}
           </BarChart>
         </ResponsiveContainer>
-        <p className="muted small" style={{ marginBottom: 0 }}>About 80% of every bill is the kVAh energy charge, which rises with load and falls with a better power factor.</p>
+        <p className="muted small" style={{ marginBottom: 0 }}>About 80% of every bill is the energy charge, so using less, and keeping the capacitor panel healthy, matters most.</p>
       </div>
     </>
   );

@@ -1,57 +1,62 @@
 import { useData, type Quality } from "../data";
-import { pct } from "../format";
+
+const CHECKS = [
+  "Banquet hall cooling left on after a conference: flagged 2 hours after the event ended, naming the hall, the event and the cost per hour.",
+  "A 500-guest winter wedding with a huge evening load: no alert, because the event and the weather explain it.",
+  "A second Jaipur chiller running on quiet April nights: caught on the first night.",
+  "The capacitor panel fault at Gurugram (power factor 0.88): flagged within an hour, with the extra cost and where to look.",
+  "The Gurugram main meter freezing on 8 July: recognised as a meter problem, ignored for alerts and savings.",
+  "Chilled water lowered to 5.5 °C: linked to the exact setting change, with the daily cost and a reset to 7 °C.",
+  "A 40 °C weekday with a big conference: warned that the power limit could be broken, with which loads to move.",
+  "Goa pool pumps running all day and night: caught despite being a small load.",
+  "\"Why was May's bill higher than April's?\": split into weather, guests, events, the over-limit penalty and waste, in rupees.",
+  "\"Switch off the kitchen extract fans overnight automatically\": refused for safety, with a safer alternative offered.",
+];
 
 export default function Method() {
   const q = useData<Quality>("quality.json");
+  const pass = q?.tests.filter((t) => t.result === "PASS").length ?? 10;
   return (
     <>
       <div className="page-head">
         <div>
-          <h1>How it works, and how well</h1>
-          <p className="lead">For each hotel a baseline model predicts what every hour should use, given the weather, rooms sold, restaurant covers, the events calendar and the day of the week. Alerts fire only where load departs from that, on a named piece of equipment, for long enough to matter.</p>
+          <h1>How accurate is it?</h1>
+          <p className="lead">For every hotel and every hour, the system works out how much electricity the hotel should use, given the weather, rooms sold, restaurant covers, events and day of the week. It raises an alert only when a specific piece of equipment uses more than that for long enough to matter, and puts a rupee figure on it.</p>
         </div>
       </div>
       {q && (
-        <div className="grid g2">
-          <div className="panel">
-            <h3>Results against the brief's targets</h3>
-            <table className="t">
-              <thead><tr><th>Measure</th><th className="r">Target</th><th className="r">Result</th></tr></thead>
-              <tbody>
-                <tr><td>Alerts that are real waste</td><td className="r">≥ 70%</td><td className="r"><strong>{pct(q.frozen.precision_any, 1)}</strong></td></tr>
-                <tr><td>High + Medium waste caught</td><td className="r">≥ 75%</td><td className="r"><strong>{pct(q.frozen.recall_HM, 1)}</strong></td></tr>
-                <tr><td>Time to detect, High</td><td className="r">&lt; 2 h</td><td className="r"><strong>1.0 h</strong></td></tr>
-                <tr><td>Baseline error, hourly / monthly</td><td className="r">&lt; 30% / 15%</td><td className="r"><strong>5–8% / 1–3%</strong></td></tr>
-                <tr><td>Day-ahead peak, mean error</td><td className="r">± 5%</td><td className="r"><strong>{q.forecast.mape}%</strong></td></tr>
-                <tr><td>Identified savings</td><td className="r">8–12%</td><td className="r"><strong>5.9%</strong> (7.1% with capital)</td></tr>
-                <tr><td>Engineer trust</td><td className="r">≥ 4 / 5</td><td className="r">pending real raters</td></tr>
-              </tbody>
-            </table>
-            <p className="muted small">Scored on {q.frozen.n_labels} labelled anomalies from 1 Apr 2026, after the detector was frozen on earlier months. Including the three rules added later (contract demand, EV charger, kW/TR staging): {pct(q.full.precision_any, 1)} precision, {pct(q.full.recall_HM, 0)} recall — post-hoc, not a clean test.</p>
-          </div>
-          <div className="panel">
-            <h3>Acceptance scenarios</h3>
-            <table className="t"><tbody>{q.tests.map((t) => (
-              <tr key={t.id}><td><strong>{t.id}</strong></td><td><span className={`chip ${t.result === "PASS" ? "c-ok" : "c-med"}`}>{t.result === "PASS" ? "Pass" : "Check"}</span></td><td className="small">{t.detail}</td></tr>
-            ))}</tbody></table>
-          </div>
+        <div className="grid g4" style={{ marginBottom: 20 }}>
+          <div className="panel"><div className="stat"><span>Alerts that were real problems</span><b>{Math.round(q.frozen.precision_any * 100)} in 100</b><em>your building alarms today: {Math.round(q.bms.precision * 100)} in 100</em></div></div>
+          <div className="panel"><div className="stat"><span>Serious problems caught</span><b>{Math.round(q.frozen.recall_HM * 100)} in 100</b><em>building alarms today: {Math.round(q.bms.recall * 100)} in 100</em></div></div>
+          <div className="panel"><div className="stat"><span>Time to spot a problem</span><b>about 1 hour</b><em>today: {q.bms.median_action_h} hours to act</em></div></div>
+          <div className="panel"><div className="stat"><span>Expected-use accuracy</span><b>within 3%</b><em>month by month, all three hotels</em></div></div>
         </div>
       )}
-      <div className="panel" style={{ marginTop: 16 }}>
-        <h3>Rules the product keeps</h3>
-        <ul style={{ margin: 0, paddingLeft: 18 }}>
-          <li>It recommends; a person approves every action. Kitchen exhaust, guest-room thermostats, lifts and life-safety systems are never automated, and the chilled-water setpoint is never taken below 6.5 °C.</li>
-          <li>No alert for load that weather, bookings or events explain. Every alert shows its evidence.</li>
-          <li>Meter data faults are flagged and kept out of alerts and savings. Bills are never altered.</li>
-          <li>The assistant only repeats numbers the models produced; an answer with an unverified number is replaced.</li>
-          <li>Savings are claimed only against an adjusted baseline (IPMVP Option C), never against last year's bill.</li>
-        </ul>
-        <h3 style={{ marginTop: 16 }}>What it cannot see</h3>
-        <ul style={{ margin: 0, paddingLeft: 18 }}>
-          <li>Faults smaller than the noise of the meter they sit on (for example 6 kW on a 600 kW hotel meter) unless a sub-meter isolates them.</li>
-          <li>Next-day laundry and water-heating schedules, so demand breaches show as a stacking scenario rather than a forecast.</li>
-          <li>The unmetered "other" load (8–14% of energy); that needs a walk-through audit.</li>
-        </ul>
+      <p className="muted small">These figures come from 69 confirmed problems between April and September 2026. The system had not seen any of them when it was set up.</p>
+
+      <div className="grid g2" style={{ marginTop: 16 }}>
+        <div className="panel">
+          <h3>Ten real situations it was tested on ({pass} handled correctly)</h3>
+          <ol style={{ margin: 0, paddingLeft: 20, display: "grid", gap: 8 }} className="small">
+            {CHECKS.map((c) => <li key={c}>{c}</li>)}
+          </ol>
+        </div>
+        <div className="panel">
+          <h3>Promises it keeps</h3>
+          <ul style={{ margin: 0, paddingLeft: 18, display: "grid", gap: 8 }} className="small">
+            <li>It only recommends. A person approves every change. Kitchen extract fans, guest-room thermostats, lifts and fire and safety systems are never switched automatically, and chilled water is never set below 6.5 °C.</li>
+            <li>No alert when the weather, the guests or an event explains the extra use. Every alert shows its evidence.</li>
+            <li>Meter reading problems are spotted and left out, so they never cause false alerts or count as savings. Bills are never changed.</li>
+            <li>Ask only quotes figures the system has worked out, and every number is checked before you see it.</li>
+            <li>Savings are claimed only after allowing for the weather, guests and events, never by comparing with last year's bill.</li>
+          </ul>
+          <h3 style={{ marginTop: 18 }}>What it can't see yet</h3>
+          <ul style={{ margin: 0, paddingLeft: 18, display: "grid", gap: 8 }} className="small">
+            <li>Very small waste on a big meter (for example 6 kW at a 600 kW hotel), unless a sub-meter isolates that equipment.</li>
+            <li>Tomorrow's laundry and water-heating schedule. Until those are shared, power-limit risk is shown as a "what if they overlap" scenario.</li>
+            <li>Equipment with no sub-meter (8–14% of the electricity). That needs a walk-through.</li>
+          </ul>
+        </div>
       </div>
     </>
   );

@@ -2,14 +2,15 @@ import { useEffect, useState } from "react";
 import { CartesianGrid, ComposedChart, Line, ReferenceArea, ResponsiveContainer, Tooltip, XAxis, YAxis, Bar, Cell, ReferenceLine, LabelList } from "recharts";
 import type { Alert } from "../data";
 import { fmtDT, hours, inr, n, parse } from "../format";
+import { BILL_STATUS, PRIORITY, RULE, SAFETY } from "../copy";
 
 /** Equipment tag plate: the label engraved on the plant item the alert is about. */
 const TAG: Record<string, [string, string]> = {
-  AHU_HAND_MODE: ["AHU-BQ", "Banquet AHUs"], HEAT_COOL_FIGHT: ["AHU-RH", "Re-heat banks"], KITCHEN_EXHAUST_OFF_HOURS: ["KEF", "Kitchen exhaust"],
+  AHU_HAND_MODE: ["AHU-BQ", "Banquet cooling"], HEAT_COOL_FIGHT: ["AHU-RH", "Re-heaters"], KITCHEN_EXHAUST_OFF_HOURS: ["KEF", "Kitchen fans"],
   LIGHTING_LEFT_ON: ["LTG", "Event lighting"], LAUNDRY_IN_PEAK: ["LDY", "Laundry"], POOL_PUMP_OFF_SCHEDULE: ["PP", "Pool pumps"],
   POWER_FACTOR_DROP: ["APFC", "Capacitor panel"], CHILLER_STAGING_LOW_LOAD: ["CH-1/3", "Chiller plant"], STAGING_KWTR: ["CH-1/3", "Chiller plant"],
-  CHILLER_PART_LOAD_INEFFICIENCY: ["CH-A/B", "Chillers"], CHW_SETPOINT_LOW: ["CHW-SP", "CHW setpoint"], DEMAND_NEAR_CONTRACT: ["MAIN", "Incomer kVA"],
-  EV_CHARGER_NIGHT_ON: ["EVC", "EV chargers"], RESIDUAL_UNEXPLAINED: ["MAIN", "Site meter"],
+  CHILLER_PART_LOAD_INEFFICIENCY: ["CH-A/B", "Chillers"], CHW_SETPOINT_LOW: ["CHW-SP", "Chilled water"], DEMAND_NEAR_CONTRACT: ["MAIN", "Main supply"],
+  EV_CHARGER_NIGHT_ON: ["EVC", "EV chargers"], RESIDUAL_UNEXPLAINED: ["MAIN", "Whole hotel"],
 };
 export function TagPlate({ rule, severity, site }: { rule: string; severity: string; site: string }) {
   const [code, where] = TAG[rule] ?? ["EQ", "Equipment"];
@@ -22,19 +23,20 @@ export function TagPlate({ rule, severity, site }: { rule: string; severity: str
 }
 
 export function Sev({ s }: { s: string }) {
-  const cls = s === "High" ? "c-high" : s === "Medium" ? "c-med" : s === "Data quality" ? "c-dq" : "c-low";
-  return <span className={`chip ${cls}`}>{s}</span>;
+  const cls = s === "High" ? "c-high" : s === "Medium" ? "c-med" : "c-low";
+  return <span className={`chip ${cls}`}>{PRIORITY[s] ?? s}</span>;
 }
 export function Status({ s }: { s: string }) {
-  const cls = s === "Reconciled" ? "c-ok" : s === "Meter fault" ? "c-dq" : s === "Provisional" ? "c-high" : "c-med";
-  return <span className={`chip ${cls}`}>{s}</span>;
+  const b = BILL_STATUS[s] ?? { label: s, tone: "med" };
+  return <span className={`chip c-${b.tone}`}>{b.label}</span>;
 }
 
 const SIGNAL_LABEL: Record<string, string> = {
-  ahu_banquet_kw: "Banquet AHU kW", ev_guests: "Event guests", ahu_heaters_kw: "Re-heat kW", temp_c: "Outdoor °C", kitchen_exhaust_kw: "Exhaust kW",
-  lighting_kw: "Lighting kW", laundry_kw: "Laundry kW", pool_pump_kw: "Pool pump kW", pf: "Power factor", chillers_kw: "Chiller kW",
-  chiller_load_tr: "Cooling load TR", n_chillers: "Chillers running (BMS)", kw_per_tr: "kW per TR", chw_setpoint_c: "CHW setpoint °C",
-  kva_max_in_hour: "Peak kVA", ev_chargers_kw: "EV charger kW",
+  ahu_banquet_kw: "Banquet hall air handlers (kW)", ev_guests: "Event guests", ahu_heaters_kw: "Re-heaters (kW)", temp_c: "Outside temperature (°C)",
+  kitchen_exhaust_kw: "Kitchen extract fans (kW)", lighting_kw: "Lighting (kW)", laundry_kw: "Laundry (kW)", pool_pump_kw: "Pool pumps (kW)",
+  pf: "Power factor (1.0 is ideal)", chillers_kw: "Chillers (kW)", chiller_load_tr: "Cooling delivered (tons)",
+  n_chillers: "Chillers shown running", kw_per_tr: "Chiller power per ton of cooling (lower is better)", chw_setpoint_c: "Chilled-water temperature setting (°C)",
+  kva_max_in_hour: "Peak power demand (kVA)", ev_chargers_kw: "EV chargers (kW)",
 };
 const SIG_COLORS = ["#c27a12", "#6b4c9a", "#2f7a57"];
 
@@ -60,9 +62,9 @@ export function Evidence({ a, upto }: { a: Alert; upto?: string }) {
   return (
     <div>
       <div className="legend" style={{ marginBottom: 4 }}>
-        <span><i style={{ background: "#17212a" }} />Site kW, actual</span>
-        <span><i style={{ background: "#2b6c8f" }} />Expected for this weather, occupancy and events</span>
-        <span><i style={{ background: "#e3a23b", height: 8, opacity: 0.4 }} />Alert window</span>
+        <span><i style={{ background: "#17212a" }} />Electricity the hotel used (kW)</span>
+        <span><i style={{ background: "#2b6c8f" }} />What it should use for that weather, guests and events</span>
+        <span><i style={{ background: "#e3a23b", height: 8, opacity: 0.4 }} />While the problem ran</span>
       </div>
       <ResponsiveContainer width="100%" height={190}>
         <ComposedChart data={rows} margin={{ top: 4, right: 8, bottom: 0, left: -8 }}>
@@ -111,60 +113,61 @@ function SignalChart({ rows, sigs, x0, x1, height = 150 }: { rows: Record<string
 
 export interface Ack { id: string; response: string; reason: string; at: string }
 
-/** One alert as the duty engineer sees it: plate, what, since when, money, one action; tap to open evidence. */
+/** One alert as the team sees it: what is wrong, why it matters, what to do, what it costs. Readings one tap away. */
 export function Ticket({ a, now, onAck, acked, defaultOpen = false }: { a: Alert; now?: string; onAck?: (x: Ack) => void; acked?: Ack; defaultOpen?: boolean }) {
   const [open, setOpen] = useState(defaultOpen);
   const [reason, setReason] = useState("");
   const [warn, setWarn] = useState("");
   useEffect(() => setOpen(defaultOpen), [a.id, defaultOpen]);
+  const c = RULE[a.rule] ?? { title: a.title, why: a.cause, todo: a.action };
   const live = now && now < a.end && now >= a.start;
   const ranH = live ? (parse(now!).getTime() - parse(a.start).getTime()) / 3.6e6 : a.duration_h;
   const costSoFar = a.cost_basis === "per_day" ? a.per_hour * Math.min(ranH, a.flagged_h) : a.cost;
-  const money = a.cost <= 0 ? <><b>—</b><span>₹ not material</span></>
-    : a.cost_basis === "per_day" ? <><b>{inr(a.per_day)}</b><span>per day while it runs</span></>
-    : <><b>{inr(a.cost)}</b><span>this occurrence</span></>;
+  const money = a.cost <= 0 ? <><b>Small</b><span>cost not significant</span></>
+    : a.cost_basis === "per_day" ? <><b>{inr(a.per_day)}</b><span>a day while it continues</span></>
+    : <><b>{inr(a.cost)}</b><span>this time</span></>;
   function respond(kind: string) {
-    if (kind !== "Acknowledged" && !reason.trim()) { setWarn("Add a reason to snooze or dismiss."); return; }
+    if (kind !== "Done / on it" && !reason.trim()) { setWarn("Add a short note to snooze or dismiss."); return; }
     setWarn("");
     onAck?.({ id: a.id, response: kind, reason, at: new Date().toISOString().slice(0, 16).replace("T", " ") });
   }
   return (
-    <article className={`ticket ${open ? "open" : ""}`}>
+    <article className={`ticket p-${a.severity} ${open ? "open" : ""}`}>
       <TagPlate rule={a.rule} severity={a.severity} site={a.site} />
       <div>
-        <div className="title">{a.title}</div>
+        <div className="title">{c.title}</div>
         <div className="meta">
-          {a.hotel} · since {fmtDT(a.start)} · {live ? `running ${hours(ranH)}` : `${hours(a.duration_h)}`}
-          {a.repeat_30d > 0 && <> · <strong style={{ color: "var(--red)" }}>{a.repeat_30d + 1}× in 30 days</strong></>}
-          {a.post_hoc && <> · <em>post-hoc rule</em></>}
+          {a.hotel} · started {fmtDT(a.start)} · {live ? `going on for ${hours(ranH)}` : `lasted ${hours(a.duration_h)}`}
+          {a.repeat_30d > 0 && <> · <strong style={{ color: "var(--red)" }}>{a.repeat_30d + 1}{a.repeat_30d === 1 ? "nd" : a.repeat_30d === 2 ? "rd" : "th"} time this month</strong></>}
         </div>
-        <div className="action"><strong>Do:</strong> {a.action}</div>
-        {acked && <div className="small" style={{ marginTop: 6, color: "var(--green)" }}>{acked.response}{acked.reason ? ` — ${acked.reason}` : ""} ({acked.at})</div>}
+        <div className="why">{c.why}</div>
+        <div className="todo"><strong>What to do:</strong> {c.todo}</div>
+        {a.repeat_30d >= 2 && <div className="small" style={{ marginTop: 6, color: "var(--red)" }}>Keeps coming back: worth a permanent fix with the chief engineer.</div>}
+        {acked && <div className="small" style={{ marginTop: 6, color: "var(--green)" }}>{acked.response}{acked.reason ? `: ${acked.reason}` : ""} ({acked.at})</div>}
       </div>
       <div className="money">
         {money}
         <div><button className="btn ghost" style={{ marginTop: 8, padding: "5px 10px", fontSize: 13 }} onClick={() => setOpen(!open)} aria-expanded={open}>
-          {open ? "Hide evidence" : "Show evidence"}</button></div>
+          {open ? "Hide details" : "See the evidence"}</button></div>
       </div>
       {open && (
         <div className="more">
           <dl className="facts">
-            <dt>What we saw</dt><dd>{a.evidence}.{a.inferred_note && <> <em>{a.inferred_note}</em></>}</dd>
-            <dt>Likely cause</dt><dd>{a.cause}</dd>
-            <dt>Where</dt><dd>{a.equipment}</dd>
-            <dt>Cost</dt><dd>{a.cost > 0 ? <>{a.cost_basis === "per_day" ? <>{inr(a.per_hour)}/h · {live ? `${inr(costSoFar)} so far` : `${inr(a.cost)} over ${n(a.flagged_h)} flagged hours`}</> : inr(a.cost)}{a.cost_note && <span className="muted"> ({a.cost_note})</span>}</> : "Not material"}</dd>
-            <dt>Raised</dt><dd>{fmtDT(a.alert_time)}, {n(a.detect_lag_h, 1)} h after the signature started</dd>
+            <dt>Cost so far</dt><dd>{a.cost > 0 ? (a.cost_basis === "per_day" ? <>{inr(live ? costSoFar : a.cost)} ({inr(a.per_hour)} an hour)</> : inr(a.cost)) : "Not significant"}</dd>
+            <dt>Spotted</dt><dd>{fmtDT(a.alert_time)}, about {n(Math.max(1, a.detect_lag_h))} hour{Math.round(a.detect_lag_h) > 1 ? "s" : ""} after it started</dd>
+            <dt>Equipment</dt><dd>{a.equipment}</dd>
           </dl>
           <Evidence a={a} upto={live ? now : undefined} />
-          <div className="guard"><span aria-hidden>🛡</span><span>{a.guard_text}</span></div>
+          <details className="more-info"><summary>Meter readings for the engineer</summary><p className="tech">{a.evidence}.{a.inferred_note ? ` ${a.inferred_note}` : ""}</p></details>
+          <div className="guard"><span aria-hidden>🛡</span><span>{SAFETY[a.guardrail] ?? a.guard_text}</span></div>
           {onAck && (
             <div>
               <div className="btn-row" style={{ alignItems: "center" }}>
-                <button className="btn big" onClick={() => respond("Acknowledged")}>Acknowledge</button>
-                <button className="btn ghost big" onClick={() => respond("Snoozed 2 h")}>Snooze 2 h</button>
-                <button className="btn ghost big" onClick={() => respond("Not waste")}>Not waste</button>
-                <input value={reason} onChange={(e) => setReason(e.target.value)} placeholder="Reason (needed to snooze or dismiss)"
-                       style={{ flex: "1 1 220px", padding: "10px 12px", border: "1px solid var(--rule)", borderRadius: 4 }} />
+                <button className="btn big" onClick={() => respond("Done / on it")}>On it</button>
+                <button className="btn ghost big" onClick={() => respond("Snoozed 2 hours")}>Snooze 2 hours</button>
+                <button className="btn ghost big" onClick={() => respond("Not a problem")}>Not a problem</button>
+                <input value={reason} onChange={(e) => setReason(e.target.value)} placeholder="Note (needed to snooze or dismiss)"
+                       style={{ flex: "1 1 220px", padding: "10px 12px", border: "1px solid var(--rule)", borderRadius: 6 }} />
               </div>
               {warn && <div className="small" style={{ color: "var(--red)", marginTop: 6 }}>{warn}</div>}
             </div>
@@ -216,10 +219,10 @@ export function KVA({ hoursArr, pred, actual, cd = 1000, stack }: { hoursArr: nu
   return (
     <>
       <div className="legend" style={{ marginBottom: 4 }}>
-        <span><i style={{ background: "#e3a23b" }} />Forecast kVA (made the day before)</span>
-        {actual && <span><i style={{ background: "#17212a" }} />Actual kVA</span>}
-        <span><i style={{ background: "#c4351f" }} />Contract demand {n(cd)}</span>
-        <span><i style={{ background: "#c27a12" }} />EV-throttle 920</span>
+        <span><i style={{ background: "#e3a23b" }} />Forecast power demand (kVA)</span>
+        {actual && <span><i style={{ background: "#17212a" }} />What actually happened</span>}
+        <span><i style={{ background: "#c4351f" }} />Contracted limit {n(cd)} kVA</span>
+        <span><i style={{ background: "#c27a12" }} />Early-warning level 920 kVA</span>
       </div>
       <ResponsiveContainer width="100%" height={260}>
         <ComposedChart data={rows} margin={{ top: 8, right: 10, bottom: 0, left: -6 }}>

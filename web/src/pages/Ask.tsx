@@ -20,11 +20,11 @@ function Rich({ text }: { text: string }) {
 interface Msg { role: "user" | "assistant"; content: string; via?: string }
 const PROMPTS = [
   "Why was Gurugram's May 2026 bill higher than April's?",
-  "Tomorrow is 40 °C with a 318-guest conference. Any contract demand risk?",
+  "Tomorrow is 40 °C with a 300-guest conference. Will we go over the power limit?",
   "Is the Goa July 2026 bill right?",
-  "What are the biggest alerts at Jaipur?",
-  "Auto switch off kitchen exhaust overnight",
-  "How much can we save, and where?",
+  "What is wasting the most money at Jaipur?",
+  "Switch off the kitchen extract fans automatically at night",
+  "Where can we save the most?",
 ];
 
 export default function Ask() {
@@ -45,7 +45,7 @@ export default function Ask() {
       const j = await r.json();
       setMsgs([...next, { role: "assistant", content: j.text ?? j.error ?? "No answer.", via: j.mode }]);
     } catch {
-      setMsgs([...next, { role: "assistant", content: "The assistant could not be reached. The other tabs still work; try again in a minute.", via: "offline" }]);
+      setMsgs([...next, { role: "assistant", content: "Ask isn't available right now. The other pages still work; please try again in a minute.", via: "offline" }]);
     } finally {
       setBusy(false);
       setTimeout(() => end.current?.scrollIntoView({ behavior: "smooth" }), 50);
@@ -70,11 +70,11 @@ export default function Ask() {
             {m.via && <span className="via">{m.via}</span>}
           </div>
         ))}
-        {busy && <div className="msg bot muted">Working it out from the data…</div>}
+        {busy && <div className="msg bot muted">Looking at the hotel data…</div>}
         <div ref={end} />
       </div>
       <form className="ask" onSubmit={(e) => { e.preventDefault(); send(q); }}>
-        <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Ask a question" aria-label="Question" />
+        <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="For example: why did Goa's July bill go up?" aria-label="Question" />
         <button className="btn" disabled={busy || !q.trim()}>Ask</button>
       </form>
     </>

@@ -4,6 +4,8 @@ import { Ticket } from "../components/parts";
 import { SITE_NAME, useData, type Alert, type Fault, type Quality, type Site } from "../data";
 import { fmtD, fmtDT, inr, n, parse, pct } from "../format";
 import { SiteSwitch } from "./Shift";
+import { RULE } from "../copy";
+const T = (a: Alert) => RULE[a.rule]?.title ?? a.title;
 
 const START = Date.UTC(2025, 9, 1);
 const WEEKS = 53;
@@ -21,12 +23,12 @@ export default function Engineering() {
   const v = useMemo(() => {
     if (!alerts) return null;
     const seen = alerts.filter((a) => (site === "ALL" || a.site === site) && a.alert_time <= now);
-    const types = [...new Set(seen.map((a) => a.title))];
+    const types = [...new Set(seen.map(T))];
     const grid: Record<string, number[]> = {};
     for (const t of types) grid[t] = Array(WEEKS).fill(0);
-    for (const a of seen) { const w = week(a.start); if (w >= 0 && w < WEEKS) grid[a.title][w] += a.cost; }
+    for (const a of seen) { const w = week(a.start); if (w >= 0 && w < WEEKS) grid[T(a)][w] += a.cost; }
     const byType = types.map((t) => {
-      const xs = seen.filter((a) => a.title === t);
+      const xs = seen.filter((a) => T(a) === t);
       const last30 = xs.filter((a) => parse(now).getTime() - parse(a.alert_time).getTime() < 30 * 864e5);
       return { t, n: xs.length, cost: xs.reduce((s, a) => s + a.cost, 0), last30: last30.length, lag: median(xs.map((a) => a.detect_lag_h)),
                last: xs.map((a) => a.alert_time).sort().at(-1)!, hotels: [...new Set(xs.map((a) => a.site))] };
@@ -35,20 +37,21 @@ export default function Engineering() {
     return { seen, byType, grid, max };
   }, [alerts, site, now]);
 
-  const cellAlerts = sel && v ? v.seen.filter((a) => a.title === sel.title && week(a.start) === sel.w) : [];
+  const cellAlerts = sel && v ? v.seen.filter((a) => T(a) === sel.title && week(a.start) === sel.w) : [];
 
   return (
     <>
       <div className="page-head">
         <div>
-          <h1>Engineering review</h1>
-          <p className="lead">What keeps coming back, what it costs, and how fast it is caught. Darker squares cost more that week; click one to see its alerts.</p>
+          <h1>Equipment patterns</h1>
+          <p className="lead">Which problems keep coming back, what they cost, and how quickly they are spotted. Fix the cause of a repeat problem, not each occurrence.</p>
         </div>
         <SiteSwitch value={site} onChange={(s) => { setSite(s); setSel(null); }} />
       </div>
 
       <div className="panel">
-        <h3>Waste by type and week, Oct 2025 – Sep 2026{site !== "ALL" ? `, ${SITE_NAME[site]}` : ""}</h3>
+        <h3>Waste week by week{site !== "ALL" ? `, ${SITE_NAME[site]}` : ""}</h3>
+        <p className="muted small" style={{ marginTop: 0 }}>Darker means more money wasted that week. Click a square to see what happened.</p>
         {!v ? <p className="muted">Loading…</p> : (
           <div className="scroll-x">
             <div style={{ minWidth: 820 }}>
@@ -86,48 +89,48 @@ export default function Engineering() {
         </div>
       )}
 
-      <h2>Recurring faults</h2>
+      <h2>Repeat problems</h2>
       {v && (
         <div className="panel scroll-x">
           <table className="t">
-            <thead><tr><th>Type</th><th>Hotels</th><th className="r">Alerts</th><th className="r">Last 30 days</th><th className="r">₹ flagged</th><th className="r">Median time to alert</th><th>Last seen</th></tr></thead>
+            <thead><tr><th>Problem</th><th>Hotels</th><th className="r">Times this year</th><th className="r">Last 30 days</th><th className="r">Cost</th><th className="r">Spotted after</th><th>Last seen</th></tr></thead>
             <tbody>{v.byType.map((r) => (
               <tr key={r.t}>
                 <td><strong>{r.t}</strong></td><td>{r.hotels.map((s) => SITE_NAME[s]).join(", ")}</td><td className="r">{r.n}</td>
                 <td className="r" style={{ color: r.last30 >= 2 ? "var(--red)" : undefined, fontWeight: r.last30 >= 2 ? 700 : 400 }}>{r.last30}</td>
-                <td className="r">{inr(r.cost)}</td><td className="r">{n(r.lag, 1)} h</td><td>{fmtDT(r.last, false)}</td>
+                <td className="r">{inr(r.cost)}</td><td className="r">{n(Math.max(1, r.lag), 0)} h</td><td>{fmtDT(r.last, false)}</td>
               </tr>
             ))}</tbody>
           </table>
-          <p className="muted small" style={{ marginBottom: 0 }}>Red: two or more in the last 30 days — treat as a standing fault, not a one-off (fix the schedule, interlock or panel, not the symptom).</p>
+          <p className="muted small" style={{ marginBottom: 0 }}>Red means it happened twice or more in the last 30 days. Fix the schedule, setting or panel behind it rather than each occurrence.</p>
         </div>
       )}
 
       <div className="grid g2" style={{ marginTop: 24 }}>
         <div className="panel">
-          <h3>How well it detects</h3>
+          <h3>Compared with your current building alarms</h3>
           {q && (
             <table className="t">
-              <thead><tr><th></th><th className="r">BMS alarms today</th><th className="r">This product</th></tr></thead>
+              <thead><tr><th></th><th className="r">Building alarms</th><th className="r">Saffron Energy</th></tr></thead>
               <tbody>
-                <tr><td>Alerts that are real waste</td><td className="r">{pct(q.bms.precision)}</td><td className="r"><strong>{pct(q.frozen.precision_any, 1)}</strong></td></tr>
-                <tr><td>High + Medium waste caught</td><td className="r">{pct(q.bms.recall)}</td><td className="r"><strong>{pct(q.frozen.recall_HM, 1)}</strong></td></tr>
-                <tr><td>Time to act / detect</td><td className="r">{q.bms.median_action_h} h</td><td className="r"><strong>1.0 h</strong></td></tr>
-                <tr><td>Closed with no action</td><td className="r">{pct(q.bms.closed_no_action)}</td><td className="r">see ratings</td></tr>
+                <tr><td>Alerts that turn out to be real problems</td><td className="r">{Math.round(q.bms.precision * 100)} in 100</td><td className="r"><strong>{Math.round(q.frozen.precision_any * 100)} in 100</strong></td></tr>
+                <tr><td>Serious problems that get flagged</td><td className="r">{Math.round(q.bms.recall * 100)} in 100</td><td className="r"><strong>{Math.round(q.frozen.recall_HM * 100)} in 100</strong></td></tr>
+                <tr><td>Time until someone knows</td><td className="r">{q.bms.median_action_h} hours</td><td className="r"><strong>about 1 hour</strong></td></tr>
+                <tr><td>Alerts a year, all three hotels</td><td className="r">{n(q.bms.alarms)}</td><td className="r"><strong>{n(alerts?.filter((a) => a.channel === "Alert").length ?? 0)}</strong></td></tr>
               </tbody>
             </table>
           )}
-          <p className="muted small" style={{ marginBottom: 0 }}>Scored on the {q?.frozen.n_labels ?? 69} labelled anomalies from 1 Apr 2026, which the detector never saw while it was tuned. Rules added after that freeze are labelled post-hoc and excluded.</p>
+          <p className="muted small" style={{ marginBottom: 0 }}>Checked against {q?.frozen.n_labels ?? 69} confirmed problems from April to September 2026, which the system had not seen before.</p>
         </div>
         <div className="panel">
-          <h3>Meter data faults (kept out of alerts and savings)</h3>
+          <h3>Meter reading problems</h3>
           <table className="t">
-            <thead><tr><th>Hotel</th><th>When</th><th>Kind</th><th className="r">Hours</th></tr></thead>
+            <thead><tr><th>Hotel</th><th>When</th><th>What went wrong</th><th className="r">Hours</th></tr></thead>
             <tbody>{faults?.map((f) => (
-              <tr key={f.start}><td>{f.hotel}</td><td>{fmtDT(f.start, false)}</td><td>{f.kind}</td><td className="r">{n(f.duration_h, 1)}</td></tr>
+              <tr key={f.start}><td>{f.hotel}</td><td>{fmtDT(f.start, false)}</td><td>{f.kind === "flat line" ? "Reading stuck" : f.kind === "zero reading" ? "Reading zero" : f.kind === "missing readings" ? "No readings" : f.kind}</td><td className="r">{n(f.duration_h, 1)}</td></tr>
             ))}</tbody>
           </table>
-          <p className="muted small" style={{ marginBottom: 0 }}>Found from the billed readings themselves (frozen or zero while live kW keeps moving). Bills issued on those readings are left as issued; Finance shows the corrected figure beside them.</p>
+          <p className="muted small" style={{ marginBottom: 0 }}>When the main meter sends bad readings, those hours are left out, so they never cause false alerts or count as savings. Bills issued on bad readings are shown next to the corrected figure in Bills & savings.</p>
         </div>
       </div>
     </>
