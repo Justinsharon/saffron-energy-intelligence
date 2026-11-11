@@ -163,7 +163,8 @@ table.t tbody tr.click:hover td { background: #f6f8f8; }
 .heat .cell { height: 16px; border-radius: 2px; }
 
 .chat { display: flex; flex-direction: column; gap: 12px; }
-.msg { max-width: 760px; padding: 12px 14px; border-radius: var(--radius-m); white-space: pre-wrap; line-height: 1.55; }
+.msg { max-width: 760px; padding: 12px 14px; border-radius: var(--radius-m); line-height: 1.55; }
+.msg.user { white-space: pre-wrap; }
 .msg.user { align-self: flex-end; background: var(--slate); color: #fff; }
 .msg.bot { background: var(--paper); border: 1px solid var(--rule); }
 .msg .via { display: block; margin-top: 8px; font-size: 12px; color: var(--ink-3); }

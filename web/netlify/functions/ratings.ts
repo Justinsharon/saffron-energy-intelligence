@@ -30,8 +30,9 @@ const esc = (v: unknown) => { const s = v == null ? "" : String(v); return /[",\
 async function read(): Promise<Record<string, string>[]> {
   const g = await gh("GET");
   const txt: string = g.files?.[FILE]?.content ?? "";
-  const [head, ...body] = parseCSV(txt);
-  if (!head) return [];
+  const [rawHead, ...body] = parseCSV(txt.replace(/^\uFEFF/, ""));
+  if (!rawHead) return [];
+  const head = rawHead.map((h) => h.trim());           // a hand-edited gist can leave spaces in the header
   return body.map((r) => Object.fromEntries(head.map((h, i) => [h, r[i] ?? ""])));
 }
 

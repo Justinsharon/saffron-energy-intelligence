@@ -1,5 +1,22 @@
 import { useRef, useState } from "react";
 
+/** Claude sometimes answers with light markdown: render **bold** and "- " bullets, nothing else (no HTML from the model). */
+function Rich({ text }: { text: string }) {
+  const inline = (t: string) => t.split(/(\*\*[^*]+\*\*)/g).map((part, i) =>
+    part.startsWith("**") && part.endsWith("**") ? <strong key={i}>{part.slice(2, -2)}</strong> : <span key={i}>{part}</span>);
+  const blocks: JSX.Element[] = [];
+  let list: string[] = [];
+  const flush = () => { if (list.length) blocks.push(<ul key={blocks.length} style={{ margin: "6px 0", paddingLeft: 20 }}>{list.map((l, i) => <li key={i}>{inline(l)}</li>)}</ul>); list = []; };
+  for (const line of text.split("\n")) {
+    const m = line.match(/^\s*(?:[-•*]|\d+[.)])\s+(.*)$/);
+    if (m) { list.push(m[1]); continue; }
+    flush();
+    if (line.trim()) blocks.push(<p key={blocks.length} style={{ margin: "6px 0" }}>{inline(line.replace(/^#+\s*/, ""))}</p>);
+  }
+  flush();
+  return <>{blocks}</>;
+}
+
 interface Msg { role: "user" | "assistant"; content: string; via?: string }
 const PROMPTS = [
   "Why was Gurugram's May 2026 bill higher than April's?",
@@ -49,7 +66,7 @@ export default function Ask() {
       <div className="chat" aria-live="polite">
         {msgs.map((m, i) => (
           <div key={i} className={`msg ${m.role === "user" ? "user" : "bot"}`}>
-            {m.content}
+            {m.role === "user" ? m.content : <Rich text={m.content} />}
             {m.via && <span className="via">{m.via}</span>}
           </div>
         ))}
