@@ -70,11 +70,11 @@ Optimistic for the reason above (a held-out year is close to a copy of training 
   The Check is the revised Gurugram bill for Nov 2020 (kVAh 1.5 % below the meter); it was counted as a provisional bill before the fix (9 provisional). Its original row stays
   Reconciled and is marked `superseded`. Billed minus corrected over fault months: GGN −₹2.37 lakh (billed low, 23 months), GOA −₹5,400 (4 months), other hotels +₹1,900–2,300 each.
   These are dispute candidates, not savings, and no bill was altered.
-  **Unreproduced earlier figures (15 Nov):** before the re-run this section gave GGN −₹2.29 lakh and +₹1,900–2,300 for every other hotel, GOA included. The re-run overwrote
-  `bill_reconciliation.parquet` and no older copy exists (untracked; not in git or the 8 Nov snapshots), so the old rows cannot be compared. The 9 → 8 provisional and 0 → 1 Check change
-  is explained: reverting the revised-bill handling in a scratch copy gives 713 / 34 / 9 / 0 on the same inputs. The GGN (about ₹8,000) and GOA (about ₹7,500) fault-month differences
-  are not explained: reverting the tariff-by-date lookup, the flat-line fault filter or the site filter does not reproduce the old totals. The figures above are what the current code gives on the
-  current inputs; treat the earlier ones as unverified. Jaipur, Goa 2 and Udaipur match the old range.
+  **Earlier figures explained (15 Nov):** the previous text (GGN −₹2.29 lakh, +₹1,900–2,300 for "every other hotel") was stale and incomplete, not a different result. It came from a first run
+  (GGN −₹2,28,695) made before `clean_tariffs` was changed to recover a missing rate from the bills it applied to instead of only interpolating between years; GGN has one such imputed rate.
+  The final cleaned tables give −₹2,37,220, and the text was not updated. Putting the interpolation back in a scratch copy reproduces −₹2,28,695 exactly. Goa was −₹5,423 in every run; the old text left it out
+  of the range. The 9 → 8 provisional and 0 → 1 Check change is the revised-bill fix: reverting it gives 713 / 34 / 9 / 0. Source: the 14 Nov bills runs in the original large-pack session's transcript.
+  Re-cleaning from the raw pack gives tables identical to the saved ones, so the current figures stand.
 - Provisional bills: 8 bills priced ₹12.2 lakh above the meter-based figure; median kVAh 14.6 % high.
 - Tariff-only check on all 3,000 sites (no meter exists for most): **99 % of 249,102 Actual bills reproduce within 1 % on every line**; 0 of 2,498 provisional do.
   About 30 sites have a tariff-sheet contract demand 100 kVA different from the bill (2,514 bills), and 89 % of those fail the check.

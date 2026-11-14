@@ -79,5 +79,5 @@ Priority order; items 2 and 3 test the two guardrails the brief cares most about
 Done: `data/large_stress/` (README, `_stress_cases.csv`, 17 labels), `tools/make_stress_dataset.py`, `tools/stress_run.py`, results in `docs/stress_pack_results.md`.
 `data/large` and `data/clean_large` were not modified by the generator (asserted on every run). Frozen detector scored: 12 of 12 planted anomalies caught, 5 of 7 hard negatives quiet,
 whole-pack precision 89.6 % / recall 98.7 % / median time to detect 1 h. Three post-hoc fixes came out of it (tariff by date, gain-error check, revised bill); they are labelled post-hoc and are not held-out.
-Open: the large-pack bill re-run overwrote `data/clean_large/results/bill_reconciliation.parquet`; the old Gurugram (−₹2.29 lakh) and Goa fault-month totals could not be reproduced (see `docs/large_pack_results.md` §4). Back up result files before re-running.
+Note: the 15 Nov large-pack bill re-run overwrote `data/clean_large/results/bill_reconciliation.parquet`. The earlier docs figures (GGN −₹2.29 lakh) were a stale first run, now explained in `docs/large_pack_results.md` §4. Back up result files before re-running.
 Not done: forecast, savings plan, assistant and UI on the stress pack; flicker and alternate-blank meter faults; hourly-meter gain check.
