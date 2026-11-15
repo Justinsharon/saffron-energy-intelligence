@@ -271,3 +271,63 @@ footer.foot { max-width: 1300px; }
   main { padding: 20px 16px 50px; }
 }
 .nav { scrollbar-width: none; } .nav::-webkit-scrollbar { display: none; }
+
+/* Tomorrow's plan: bookings form, operating-plan timeline (one step per timed action), Today's plan card */
+.field { display: flex; flex-direction: column; gap: 4px; }
+.field input, .field textarea, .booking select, .booking input, .inline-form input, .inline-form select, input.name {
+  border: 1px solid var(--rule); background: var(--paper); border-radius: 10px; padding: 9px 12px; font: inherit; font-size: 14.5px; color: var(--ink); min-width: 0; }
+.field input[type="number"] { font-size: 20px; font-weight: 700; font-variant-numeric: tabular-nums; max-width: 160px; }
+.field .hint { font-size: 12px; color: var(--ink-3); }
+.field .hint.sugg { color: var(--coral); }
+.booking { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; background: var(--soft); border-radius: 14px; padding: 8px; margin-bottom: 8px; }
+.booking .guests { display: inline-flex; align-items: center; gap: 6px; font-size: 13.5px; color: var(--ink-2); }
+.booking .guests input { width: 90px; }
+.plan-head { align-items: flex-end; flex-wrap: wrap; }
+.plan-total { font-size: 18px; color: var(--ink); }
+input.name { width: 180px; }
+.timeline { list-style: none; margin: 8px 0 12px; padding: 0; position: relative; }
+.timeline::before { content: ""; position: absolute; left: 86px; top: 8px; bottom: 8px; width: 2px; background: var(--rule); }
+.step { display: grid; grid-template-columns: 76px 1fr; gap: 22px; position: relative; padding: 4px 0 14px; }
+.step::before { content: ""; position: absolute; left: 81px; top: 14px; width: 12px; height: 12px; border-radius: 50%; background: var(--paper); border: 2px solid var(--ink); }
+.step.ok::before { background: var(--green); border-color: var(--green); }
+.step.skip::before { background: var(--rule); border-color: var(--rule); }
+.step .stime { text-align: right; padding-top: 8px; line-height: 1.2; }
+.step .stime b { display: block; font-size: 16px; font-variant-numeric: tabular-nums; }
+.step .stime span { font-size: 12px; color: var(--ink-3); }
+.step .stime em { display: block; font-style: normal; font-size: 11px; color: var(--coral); }
+.step .body { background: var(--paper); border-radius: var(--radius-m); padding: 14px 18px; }
+.step.skip .body { opacity: 0.6; }
+.step .row1 { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+.step .row1 strong { font-size: 16px; }
+.step .tag { background: var(--ink); color: #fff; font-weight: 800; font-size: 11.5px; letter-spacing: 0.04em; border-radius: 8px; padding: 4px 8px; }
+.step .money { margin-left: auto; font-weight: 700; font-variant-numeric: tabular-nums; font-size: 14px; }
+.step .why { margin: 6px 0 8px; color: var(--ink-2); font-size: 14px; max-width: 80ch; }
+.step .guard { background: var(--soft); padding: 8px 12px; border-radius: 12px; }
+.step .status { margin-top: 8px; font-weight: 600; }
+.step .status.ok { color: var(--green); } .step .status.skip { color: var(--ink-3); }
+.inline-form { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
+.inline-form input { flex: 1 1 220px; }
+.banner.compact { padding: 14px 20px; }
+.banner.compact .gauge { width: 96px; height: 96px; }
+.banner.compact .gauge b { font-size: 19px; }
+.today-plan .next { display: grid; gap: 8px; margin: 10px 0; }
+.today-plan .next > div { display: grid; grid-template-columns: 98px auto 1fr auto; gap: 10px; align-items: center; background: var(--soft); border-radius: 12px; padding: 8px 12px; font-size: 14px; }
+.today-plan .next .t { font-weight: 700; font-variant-numeric: tabular-nums; }
+.today-plan .next .tag { background: var(--ink); color: #fff; font-weight: 800; font-size: 11px; border-radius: 7px; padding: 3px 7px; }
+.today-plan .next .st { font-size: 12.5px; color: var(--ink-3); }
+.today-plan .next .st.ok { color: var(--green); font-weight: 600; }
+@media (max-width: 760px) {
+  .form3 { grid-template-columns: 1fr 1fr; }
+  .charts2 { grid-template-columns: 1fr; }
+  .timeline::before { left: 10px; }
+  .step { grid-template-columns: 1fr; gap: 6px; padding-left: 28px; }
+  .step::before { left: 5px; }
+  .step .stime { text-align: left; padding-top: 0; display: flex; gap: 8px; align-items: baseline; }
+  .step .stime b { display: inline; }
+  .step .money { margin-left: 0; width: 100%; }
+  .today-plan .next > div { grid-template-columns: auto 1fr; }
+  .today-plan .next .st { grid-column: 1 / -1; }
+  input.name { width: 100%; }
+  .plan-head .btn-row { width: 100%; }
+}
+.ask-inline { background: none; border: 0; padding: 0; color: var(--coral); font: inherit; font-weight: 600; cursor: pointer; text-decoration: underline; }

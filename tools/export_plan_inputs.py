@@ -9,12 +9,16 @@ For each date from today (IST) for the next 60 days:
              live-year meter readings are used;
       TR   - a cooling-load model on sub_ggn_hourly.chiller_load_tr with the same features and method as the baseline
              (its leave-one-month-out CV(RMSE) is reported in index.json).
-  * Responses by central finite differences around the base day: d(kW)/d(room), d(kW)/d(cover), d(kW)/d(°C), d(TR)/d(°C), d(TR)/d(room),
+  * Responses by central finite differences around the base day: d(kW)/d(room) and d(kW)/d(guest) (each with the other held fixed),
+    d(kW)/d(cover), d(kW)/d(°C), d(TR)/d(°C), d(TR)/d(room), d(TR)/d(guest),
     and per-100-guest banquet responses (kW and TR) for hours -3..+2 around an event's start and end, plus the mid-event level. The
     model has no venue feature, so Hall A and Hall B share the conference response; A+B uses the wedding (evening, social) response.
   * Last year's behaviour on matched days (same month, same day type, similar cooling load; original year), which the plan's ₹ savings
     are measured against: plant kW/TR by hour, laundry and water-heating boost kWh in the peak window, EV draw by hour, and banquet AHU
     run-on after events. Plus the live tariff (₹ rates) and the site PF.
+
+index.json also carries the peak-risk calibration of src/peak_risk.py (bias, 90 % upper factor, earlier days' actual/forecast ratios,
+stacking increment), so the browser applies the same risk logic to the plan's own forecast.
 
 Run: uv run python tools/export_plan_inputs.py [first_date] [days]     (needs data/live; about a minute)
 """
@@ -41,7 +45,7 @@ SITE = "GGN"
 EV_COLS = ["ev_guests", "ev_core", "ev_social", "ev_corp", "ev_evening"]
 HALLS = {"A": ("Corporate conference", "Banquet Hall A", "09:00", "18:00"), "B": ("Corporate conference", "Banquet Hall B", "09:00", "18:00"),
          "A+B": ("Wedding / social event", "Banquet Hall A + B", "19:00", "23:59")}
-D_ROOMS, D_COVERS, D_TEMP = 10, 50, 1.0
+D_ROOMS, D_GUESTS, D_COVERS, D_TEMP = 10, 20, 50, 1.0
 
 
 @contextmanager
@@ -143,6 +147,22 @@ def ahu_overrun(sub: pd.DataFrame, ev: pd.DataFrame) -> dict:
     return out
 
 
+def risk_calibration() -> dict:
+    """src/peak_risk.py's numbers for a forecast made today (full original year, as the live scenarios use): the browser then runs
+    peak_risk.assess on the plan's own peak. Thresholds are the guide's (920 / 1,000 kVA, 90 % watch line)."""
+    import forecast_app
+    import peak_risk as R
+    s = forecast_app.state()
+    S, d, hot, pf = s["S"], s["d"], s["hot"], s["pf"]
+    b = R.bias_factor(S)
+    h = R._hist(S)
+    ratios = (h.actual_peak / (h.pred_peak * b)).to_numpy()
+    inc, tab, basis = R.stacking_increment(d, hot, pf)
+    return dict(bias=round(b, 5), upper_factor=round(float(np.quantile(ratios, 0.90)), 5), ratios=[round(float(x), 5) for x in ratios],
+                stack_increment=round(inc, 1), stack_basis=basis, stack_table=tab.round(1).to_dict("records"), cd=R.CD, warn=R.WARN,
+                watch_frac=forecast.WATCH_FRAC)
+
+
 def main(first: date, n: int):
     OUT.mkdir(parents=True, exist_ok=True)
     print("fitting frozen models on the original year ...", flush=True)
@@ -179,15 +199,14 @@ def main(first: date, n: int):
         dd = forecast.thermal_features(dd)
         return dict(kw=kw_model.predict(dd), tr=np.clip(tr_model.predict(dd), 0, None), kva=kva_model.predict(dd))
 
-    def rooms(dd, k):
+    def rooms(dd, k):                                   # guests held fixed: the form asks for rooms and guests separately
         x = dd.copy()
-        gpr = (x.guests_in_house / x.rooms_sold).fillna(1.8)
         x["rooms_sold"] = x.rooms_sold + k
         x["occupancy_pct"] = x.rooms_sold / 220
-        x["guests_in_house"] = x.rooms_sold * gpr
         return x
     P0 = scen(base)
     V = {"rooms+": scen(rooms(base, D_ROOMS)), "rooms-": scen(rooms(base, -D_ROOMS)),
+         "g+": scen(base.assign(guests_in_house=base.guests_in_house + D_GUESTS)), "g-": scen(base.assign(guests_in_house=base.guests_in_house - D_GUESTS)),
          "cov+": scen(base.assign(covers_served_fnb=base.covers_served_fnb + D_COVERS)), "cov-": scen(base.assign(covers_served_fnb=base.covers_served_fnb - D_COVERS)),
          "t+": scen(base.assign(temp_c=base.temp_c + D_TEMP)), "t-": scen(base.assign(temp_c=base.temp_c - D_TEMP))}
     BQ = {}
@@ -216,10 +235,11 @@ def main(first: date, n: int):
         dd = base.iloc[i0]
         rec = dict(date=d.strftime("%Y-%m-%d"), site=SITE, template=f"live-year context for {d:%Y-%m-%d} (synthetic), last year's events cleared",
                    template_tmax=round(float(base.temp_c[sl].max()), 1), pf=pf, tariff=tariff,
-                   defaults=dict(rooms=int(dd.rooms_sold), covers=int(dd.covers_served_fnb), events=[]),
+                   defaults=dict(rooms=int(dd.rooms_sold), guests=int(dd.guests_in_house), covers=int(dd.covers_served_fnb), events=[]),
                    base=dict(kw=r1(P0["kw"][sl]), kva=r1(P0["kva"][sl]), tr=r1(day_tr), temp=r1(base.temp_c[sl])),
                    resp=dict(kw_per_room=cen("kw", "rooms+", "rooms-", D_ROOMS), kw_per_cover=cen("kw", "cov+", "cov-", D_COVERS),
-                             kw_per_c=cen("kw", "t+", "t-", D_TEMP), tr_per_c=cen("tr", "t+", "t-", D_TEMP), tr_per_room=cen("tr", "rooms+", "rooms-", D_ROOMS)),
+                             kw_per_guest=cen("kw", "g+", "g-", D_GUESTS), kw_per_c=cen("kw", "t+", "t-", D_TEMP), tr_per_c=cen("tr", "t+", "t-", D_TEMP),
+                             tr_per_room=cen("tr", "rooms+", "rooms-", D_ROOMS), tr_per_guest=cen("tr", "g+", "g-", D_GUESTS)),
                    banquet=banquet,
                    ref=dict(matched_refs(orig, sub_o, d, float(np.mean(day_tr))), curve=curve, ahu_overrun_kwh=overrun))
         txt = json.dumps(rec, separators=(",", ":"), ensure_ascii=False)
@@ -227,7 +247,7 @@ def main(first: date, n: int):
         (OUT / f"{d:%Y-%m-%d}.json").write_text(txt, encoding="utf-8")
         index[d.strftime("%Y-%m-%d")] = dict(tmax=rec["template_tmax"], rooms=rec["defaults"]["rooms"], covers=rec["defaults"]["covers"],
                                              peak_kva=round(float(P0["kva"][sl].max())), tr_max=round(float(day_tr.max())))
-    (OUT / "index.json").write_text(json.dumps(dict(days=index, cooling_model=acc, made=datetime.now(timezone(timedelta(hours=5.5))).strftime("%Y-%m-%d %H:%M IST")),
+    (OUT / "index.json").write_text(json.dumps(dict(days=index, cooling_model=acc, risk=risk_calibration(), made=datetime.now(timezone(timedelta(hours=5.5))).strftime("%Y-%m-%d %H:%M IST")),
                                                separators=(",", ":")), encoding="utf-8")
     print(f"wrote {len(index)} days to {OUT} ({max(f.stat().st_size for f in OUT.glob('2*.json')) / 1024:.0f} kB largest)")
 

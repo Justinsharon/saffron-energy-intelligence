@@ -90,16 +90,23 @@ def banquet_delta(h: int, s: int, e: int, r: dict) -> float:
     return r["during"] if s < h < e else 0.0
 
 
-def compose_day(day: dict, rooms=None, covers=None, tmax=None, bookings=()) -> dict:
-    """Base forecast + finite-difference responses. kVA moves with kW at the site PF."""
-    b, r, pf = day["base"], day["resp"], day["pf"]
-    dr = (rooms if rooms is not None else day["defaults"]["rooms"]) - day["defaults"]["rooms"]
-    dc = (covers if covers is not None else day["defaults"]["covers"]) - day["defaults"]["covers"]
-    dt = (tmax if tmax is not None else day["template_tmax"]) - day["template_tmax"]
+MAX_DT = 15.0     # °C: the per-°C responses are local slopes; a forecast further than this from the template is clamped
+
+
+def compose_day(day: dict, rooms=None, covers=None, tmax=None, bookings=(), guests=None, temps=None) -> dict:
+    """Base forecast + finite-difference responses. Temperature: an hourly forecast (temps, 24 values) or a shift to a daily max (tmax).
+    kVA moves with kW at the site PF."""
+    b, r, pf, dfl = day["base"], day["resp"], day["pf"], day["defaults"]
+    dr = (rooms if rooms is not None else dfl["rooms"]) - dfl["rooms"]
+    dg = (guests if guests is not None else dfl.get("guests", 0)) - dfl.get("guests", 0)
+    dc = (covers if covers is not None else dfl["covers"]) - dfl["covers"]
+    shift = (tmax if tmax is not None else day["template_tmax"]) - day["template_tmax"]
     kw, tr, kva, temp = [], [], [], []
     for h in range(24):
-        k = b["kw"][h] + r["kw_per_room"][h] * dr + r["kw_per_cover"][h] * dc + r["kw_per_c"][h] * dt
-        t = b["tr"][h] + r["tr_per_room"][h] * dr + r["tr_per_c"][h] * dt
+        dt = (temps[h] - b["temp"][h]) if temps is not None else shift
+        dt = max(-MAX_DT, min(MAX_DT, dt))
+        k = b["kw"][h] + r["kw_per_room"][h] * dr + r["kw_per_guest"][h] * dg + r["kw_per_cover"][h] * dc + r["kw_per_c"][h] * dt
+        t = b["tr"][h] + r["tr_per_room"][h] * dr + r["tr_per_guest"][h] * dg + r["tr_per_c"][h] * dt
         for bk in bookings:
             s, e = parse_booking(bk)
             q = day["banquet"][bk["hall"]]

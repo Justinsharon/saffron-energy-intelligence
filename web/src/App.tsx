@@ -27,7 +27,7 @@ export const ICON: Record<string, ReactNode> = {
 
 export const PAGES = [
   { id: "today", label: "Today", hint: "What needs attention now" },
-  { id: "demand", label: "Peak demand", hint: "Tomorrow's power limit risk" },
+  { id: "demand", label: "Tomorrow's plan", hint: "Bookings, chiller plan and power-limit risk for tomorrow" },
   { id: "equipment", label: "Equipment", hint: "Repeat problems and patterns" },
   { id: "costs", label: "Monthly costs", hint: "Why the bill went up or down" },
   { id: "bills", label: "Bills & savings", hint: "Bill checks and where to save" },

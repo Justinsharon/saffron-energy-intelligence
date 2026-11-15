@@ -31,9 +31,9 @@ export interface PlanRef { kwtr_ly: (number | null)[]; laundry_peak_kwh: number;
   curve: { edges: number[]; values: number[] }; ahu_overrun_kwh: { corporate: number; social: number }; matched_days: string[] }
 export interface PlanDay {
   date: string; site: string; template: string; template_tmax: number; pf: number; tariff: Tariff;
-  defaults: { rooms: number; covers: number; events: Booking[] };
+  defaults: { rooms: number; guests: number; covers: number; events: Booking[] };
   base: { kw: number[]; kva: number[]; tr: number[]; temp: number[] };
-  resp: { kw_per_room: number[]; kw_per_cover: number[]; kw_per_c: number[]; tr_per_c: number[]; tr_per_room: number[] };
+  resp: { kw_per_room: number[]; kw_per_guest: number[]; kw_per_cover: number[]; kw_per_c: number[]; tr_per_c: number[]; tr_per_room: number[]; tr_per_guest: number[] };
   banquet: Record<Hall, { kw: Resp; tr: Resp; reference: string; style: string }>;
   ref: PlanRef;
 }
@@ -70,16 +70,20 @@ export function banquetDelta(h: number, s: number, e: number, r: Resp): number {
   if (ds >= -3 && ds <= 2) return r.start[ds + 3];
   return s < h && h < e ? r.during : 0;
 }
-export interface Inputs { rooms?: number; covers?: number; tmax?: number; bookings?: Booking[] }
+/** Temperature: an hourly forecast (temps, 24 values, e.g. Open-Meteo) or a shift to a daily max (tmax). */
+export interface Inputs { rooms?: number; guests?: number; covers?: number; tmax?: number; temps?: number[] | null; bookings?: Booking[] }
+export const MAX_DT = 15;     // °C: responses are local slopes; further than this from the template is clamped
 export function composeDay(day: PlanDay, inp: Inputs = {}) {
-  const b = day.base, r = day.resp, pf = day.pf, bookings = inp.bookings ?? [];
-  const dr = (inp.rooms ?? day.defaults.rooms) - day.defaults.rooms;
-  const dc = (inp.covers ?? day.defaults.covers) - day.defaults.covers;
-  const dt = (inp.tmax ?? day.template_tmax) - day.template_tmax;
+  const b = day.base, r = day.resp, pf = day.pf, bookings = inp.bookings ?? [], dfl = day.defaults;
+  const dr = (inp.rooms ?? dfl.rooms) - dfl.rooms;
+  const dg = (inp.guests ?? dfl.guests ?? 0) - (dfl.guests ?? 0);
+  const dc = (inp.covers ?? dfl.covers) - dfl.covers;
+  const shift = (inp.tmax ?? day.template_tmax) - day.template_tmax;
   const kw: number[] = [], tr: number[] = [], kva: number[] = [], temp: number[] = [];
   for (let h = 0; h < 24; h++) {
-    let k = b.kw[h] + r.kw_per_room[h] * dr + r.kw_per_cover[h] * dc + r.kw_per_c[h] * dt;
-    let t = b.tr[h] + r.tr_per_room[h] * dr + r.tr_per_c[h] * dt;
+    const dt = Math.max(-MAX_DT, Math.min(MAX_DT, inp.temps ? inp.temps[h] - b.temp[h] : shift));
+    let k = b.kw[h] + r.kw_per_room[h] * dr + r.kw_per_guest[h] * dg + r.kw_per_cover[h] * dc + r.kw_per_c[h] * dt;
+    let t = b.tr[h] + r.tr_per_room[h] * dr + r.tr_per_guest[h] * dg + r.tr_per_c[h] * dt;
     for (const bk of bookings) {
       const [s, e] = parseBooking(bk); const q = day.banquet[bk.hall];
       k += (bk.guests / 100) * banquetDelta(h, s, e, q.kw);
@@ -176,3 +180,25 @@ export function planFor(day: PlanDay, inp: Inputs = {}) {
   const actions = planDay(f.tr, f.kva, f.temp, inp.bookings ?? [], day.pf, day.ref, day.tariff);
   return { forecast: f, actions, total_inr: actions.reduce((s, a) => s + a.saving_inr, 0) };
 }
+
+// ---- peak risk on the plan's own forecast: src/peak_risk.assess with the calibration exported in plan/index.json ----
+export interface RiskCal { bias: number; upper_factor: number; ratios: number[]; stack_increment: number; stack_basis: string;
+  stack_table: { load: string; actual_kw: number; typical_kw: number; extra_kw: number }[]; cd: number; warn: number; watch_frac: number }
+export type Level = "OK" | "STACKING WATCH" | "WARNING" | "BREACH RISK";
+export function riskFor(kva: number[], cal: RiskCal) {
+  const raw = Math.max(...kva), hour = kva.indexOf(raw);
+  const peak = raw * cal.bias, upper = peak * cal.upper_factor, stack = peak + cal.stack_increment;
+  const p = cal.ratios.length >= 10 ? cal.ratios.filter((r) => r >= cal.cd / peak).length / cal.ratios.length : null;
+  const level: Level = upper >= cal.cd || stack >= cal.cd ? "BREACH RISK" : upper >= cal.warn ? "WARNING" : stack >= cal.watch_frac * cal.cd ? "STACKING WATCH" : "OK";
+  return { raw, hour, peak, upper, stack, p_exceed: p, level };
+}
+
+/** Stable id for an action within a day's plan (decisions are stored against it). */
+export const actionId = (a: Action) => `${a.group}|${a.start}|${a.equipment}`;
+const ORDER = ["chillers", "chw", "ahu", "laundry", "ev", "water"];
+/** Timeline order: by start time (next-day starts last), then by kind. */
+export function byTime(acts: Action[]): Action[] {
+  const h = (a: Action) => Number(a.start.slice(0, 2)) + (a.start.includes("next day") ? 24 : 0);
+  return [...acts].sort((x, y) => h(x) - h(y) || ORDER.indexOf(x.group) - ORDER.indexOf(y.group));
+}
+export const TAG: Record<Action["group"], string> = { chillers: "CH", chw: "CHW", ahu: "AHU-BQ", laundry: "LDY", water: "DHW", ev: "EVC" };

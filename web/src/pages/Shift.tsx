@@ -5,6 +5,7 @@ import { Gauge, Ticket, type Ack } from "../components/parts";
 import { ICON } from "../App";
 import { SITES, SITE_NAME, useData, type Alert, type ForecastDay, type Hotel, type Site } from "../data";
 import { useFeeds } from "../feed";
+import { TodayPlanCard } from "../components/TodayPlan";
 import type { Feed } from "../feedcore";
 import { fmtD, fmtDT, inr, n, parse, iso } from "../format";
 import { pickCell, useLiveDay, useWeather } from "../live";
@@ -144,6 +145,8 @@ export default function Shift() {
           <span><strong>{f.hotel}: the main meter is sending bad readings since {fmtDT(f.start)}.</strong> We are ignoring those hours, so no false waste alerts will appear. The bill for this month will need checking.</span>
         </div>
       ))}
+
+      {(site === "ALL" || site === "GGN") && <TodayPlanCard now={now} onPlan={() => go("demand")} />}
 
       <div className="section-title" id="attention">
         <h2>Needs attention{site !== "ALL" ? ` at ${SITE_NAME[site]}` : ""}</h2>

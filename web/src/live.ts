@@ -4,23 +4,28 @@ import { load, type Site, type ForecastDay } from "./data";
 
 export const COORDS: Record<Site, [number, number]> = { GGN: [28.46, 77.03], JAI: [26.91, 75.79], GOA: [15.5, 73.83] };
 
-export interface Weather { now: Record<Site, number | null>; daily: Record<Site, Record<string, { tmax: number; tmin: number }>> }
+/** hourly: date -> 24 hourly temperatures (IST), from the same forecast call. */
+export interface Weather { now: Record<Site, number | null>; daily: Record<Site, Record<string, { tmax: number; tmin: number }>>; hourly: Record<Site, Record<string, number[]>> }
 
 let wx: Promise<Weather | null> | null = null;
 function fetchWeather(): Promise<Weather | null> {
   const sites = Object.keys(COORDS) as Site[];
   const url = "https://api.open-meteo.com/v1/forecast?" + new URLSearchParams({
     latitude: sites.map((s) => COORDS[s][0]).join(","), longitude: sites.map((s) => COORDS[s][1]).join(","),
-    current: "temperature_2m", daily: "temperature_2m_max,temperature_2m_min", timezone: "Asia/Kolkata", forecast_days: "16",
+    current: "temperature_2m", daily: "temperature_2m_max,temperature_2m_min", hourly: "temperature_2m", timezone: "Asia/Kolkata", forecast_days: "16",
   });
   return fetch(url).then((r) => (r.ok ? r.json() : null)).then((j) => {
     if (!j) return null;
     const arr = Array.isArray(j) ? j : [j];
-    const out: Weather = { now: { GGN: null, JAI: null, GOA: null }, daily: { GGN: {}, JAI: {}, GOA: {} } };
+    const out: Weather = { now: { GGN: null, JAI: null, GOA: null }, daily: { GGN: {}, JAI: {}, GOA: {} }, hourly: { GGN: {}, JAI: {}, GOA: {} } };
     sites.forEach((s, i) => {
       const x = arr[i]; if (!x) return;
       out.now[s] = x.current?.temperature_2m ?? null;
       (x.daily?.time ?? []).forEach((d: string, k: number) => { out.daily[s][d] = { tmax: x.daily.temperature_2m_max[k], tmin: x.daily.temperature_2m_min[k] }; });
+      (x.hourly?.time ?? []).forEach((t: string, k: number) => {
+        const v = x.hourly.temperature_2m[k];
+        if (v != null) (out.hourly[s][t.slice(0, 10)] ??= []).push(v);
+      });
     });
     return out;
   }).catch(() => null);

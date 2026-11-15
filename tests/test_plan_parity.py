@@ -27,7 +27,7 @@ SCENARIOS = [
     dict(covers=200, bookings=[dict(hall="A", start="13:00", end="15:00", guests=50)]),
     dict(tmax_shift=12, rooms=220, bookings=[dict(hall="A+B", start="18:00", end="23:59", guests=600)]),
     dict(tmax_shift=4, bookings=[dict(hall="B", start="08:00", end="20:00", guests=250)]),
-    dict(tmax_shift=20, rooms=220, covers=900),
+    dict(tmax_shift=20, rooms=220, covers=900, guests=430),
 ]
 RUNNER = """
 import { planFor } from "./src/plan";
@@ -45,18 +45,20 @@ def cases():
     for d, sc in zip(picks, SCENARIOS):
         day = json.loads((PLAN / f"{d}.json").read_text(encoding="utf-8"))
         inp = dict(bookings=sc.get("bookings", []))
-        for k in ("rooms", "covers"):
+        for k in ("rooms", "covers", "guests"):
             if k in sc:
                 inp[k] = sc[k]
         if "tmax_shift" in sc:
             inp["tmax"] = day["template_tmax"] + sc["tmax_shift"]
+        if len(out) % 3 == 1:                                  # some cases use an hourly temperature forecast instead of a daily max
+            inp["temps"] = [t + 3 * ((h % 7) - 3) / 3 for h, t in enumerate(day["base"]["temp"])]
         out.append(dict(day=day, inputs=inp))
     return out
 
 
 def python_plan(c):
     i = c["inputs"]
-    f = OP.compose_day(c["day"], rooms=i.get("rooms"), covers=i.get("covers"), tmax=i.get("tmax"), bookings=i["bookings"])
+    f = OP.compose_day(c["day"], rooms=i.get("rooms"), covers=i.get("covers"), tmax=i.get("tmax"), bookings=i["bookings"], guests=i.get("guests"), temps=i.get("temps"))
     acts = OP.plan_day(f["tr"], f["kva"], f["temp"], i["bookings"], c["day"]["pf"], c["day"]["ref"], c["day"]["tariff"])
     return [dict(group=a["group"], start=a["start"], end=a["end"], equipment=a["equipment"], setting=a["setting"], saving_inr=a["saving_inr"]) for a in acts]
 
