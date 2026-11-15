@@ -75,28 +75,29 @@ NUMERIC = ["temp_c", "temp_3h", "cdh", "cdh_24h", "hdh", "rel_humidity_pct", "ra
 GBM_FEATURES = NUMERIC + ["hour", "dow", "weekend"]
 
 
+def _ridge_features(df: pd.DataFrame) -> np.ndarray:
+    """Ridge design matrix. Module level (not nested in make_ridge) so a fitted model can be saved with joblib for the API."""
+    X = {}
+    prof = df.hour.astype(str) + "_" + df.weekend.astype(str)
+    for k in sorted(set(f"{h}_{w}" for h in range(24) for w in (0, 1))):
+        X[f"prof_{k}"] = (prof == k).astype(float)
+    block = pd.cut(df.hour, [-1, 5, 11, 17, 23], labels=False)
+    for v in ["cdh", "cdh_24h", "hdh", "rel_humidity_pct", "ev_guests", "ev_social", "ev_corp", "rooms_sold"]:
+        for b in range(4):
+            X[f"{v}_b{b}"] = df[v] * (block == b)
+    for v in ["temp_c", "temp_3h", "rain_mm", "guests_in_house", "covers_served_fnb", "ev_core"]:
+        X[v] = df[v]
+    X["cdh_x_hum"] = df.cdh * df.rel_humidity_pct / 100
+    return pd.DataFrame(X).to_numpy(float)
+
+
 def make_ridge(alpha: float = 3.0):
     """Regularised linear model: hour x day-type profile, and weather / events allowed to act differently by hour block."""
-    from sklearn.compose import ColumnTransformer
     from sklearn.linear_model import Ridge
     from sklearn.pipeline import Pipeline
     from sklearn.preprocessing import FunctionTransformer, StandardScaler
 
-    def expand(df: pd.DataFrame) -> np.ndarray:
-        X = {}
-        prof = df.hour.astype(str) + "_" + df.weekend.astype(str)
-        for k in sorted(set(f"{h}_{w}" for h in range(24) for w in (0, 1))):
-            X[f"prof_{k}"] = (prof == k).astype(float)
-        block = pd.cut(df.hour, [-1, 5, 11, 17, 23], labels=False)
-        for v in ["cdh", "cdh_24h", "hdh", "rel_humidity_pct", "ev_guests", "ev_social", "ev_corp", "rooms_sold"]:
-            for b in range(4):
-                X[f"{v}_b{b}"] = df[v] * (block == b)
-        for v in ["temp_c", "temp_3h", "rain_mm", "guests_in_house", "covers_served_fnb", "ev_core"]:
-            X[v] = df[v]
-        X["cdh_x_hum"] = df.cdh * df.rel_humidity_pct / 100
-        return pd.DataFrame(X).to_numpy(float)
-
-    return Pipeline([("x", FunctionTransformer(expand)), ("s", StandardScaler()), ("m", Ridge(alpha=alpha))])
+    return Pipeline([("x", FunctionTransformer(_ridge_features)), ("s", StandardScaler()), ("m", Ridge(alpha=alpha))])
 
 
 def make_gbm(**kw):

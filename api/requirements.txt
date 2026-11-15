@@ -1,0 +1,12 @@
+# Plan API runtime. Pinned to the versions in uv.lock that fitted the models in models/ (scikit-learn / LightGBM pickles must match).
+fastapi==0.163.1
+uvicorn==0.54.0
+pydantic==2.14.2
+starlette==1.10.0
+numpy==2.4.6
+pandas==3.1.0
+pyarrow==26.0.0
+scikit-learn==1.9.1
+scipy==1.17.1
+lightgbm==4.7.0
+joblib==1.6.0

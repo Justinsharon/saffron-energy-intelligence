@@ -41,6 +41,20 @@ Full brief, acceptance tests (T1–T10), metrics, schemas, findings and progress
 - Match existing style: short module docstrings explaining *why*, comments only where the reason isn't obvious.
 - Verify before claiming: results are checked against the brief's own numbers (see `CONTEXT.md` §20); keep doing that for new results.
 
+## API (Cloud Run)
+- Service `saffron-api`, project `saffron-suites`, region `asia-south1`: https://saffron-api-579804303171.asia-south1.run.app.
+  The Netlify site proxies `/api/*` to it (`web/netlify.toml`), e.g. `/api/health`, `POST /api/plan`.
+- `api/main.py` (FastAPI): `GET /health`; `POST /plan` {date, rooms, guests, covers, tmax | temps[24], bookings[{hall A/B/A+B, start, end, guests}]}
+  returns hourly forecast (kW, peak kVA, cooling TR), peak risk, the operating plan (`src/operating_plan.py`) and plain-English `notes`.
+  Odd inputs are clamped/flagged in `notes`, never an error; only a date outside the live year returns 422. Recommend only.
+- Models in `models/` are trained on **Oct 2025 – Sep 2026 only** and never refitted at run time; rebuild with
+  `uv run python tools/export_api_models.py` (also writes the live-year context, matched-day refs and meta). The image reads no `data/`.
+- Redeploy from the repo root (Dockerfile at root; `.gcloudignore` uploads only Dockerfile, `api/`, `src/`, `models/`):
+  `gcloud run deploy saffron-api --source . --region asia-south1 --allow-unauthenticated --min-instances 1 --max-instances 3 --memory 1Gi --cpu 1 --timeout 30 --project saffron-suites`
+- **min-instances is 1 only to keep it warm for the demos on 16 and 18 Nov 2026. Set it back to 0 afterwards:**
+  `gcloud run services update saffron-api --region asia-south1 --min-instances 0 --project saffron-suites`
+- Windows curl to `*.run.app` may fail with `CRYPT_E_REVOCATION_OFFLINE`; use `curl --ssl-no-revoke`.
+
 ## Status
 Done: environment, data audit, cleaning, Gurugram hourly feature, EDA, hourly baseline per hotel (`src/baseline.py`, `notebooks/03_baseline`; out-of-fold predictions in `data/clean/baseline_oof.parquet`). waste-type catalogue (`src/waste_types.py`, notebook 04), detector (`src/detector.py`, `src/evaluation.py`, notebook 05; alerts in `data/clean/alerts.parquet`). Held-out: precision 98%, recall 96%, time-to-detect met (1.0 h median from first appearance in the data, the owner-confirmed definition; 3.0 h from label start is secondary); post-hoc rules for contract-demand breach and EV charger night draw now exist (`src/demand_ev_rules.py`, notebook 08; 5 alerts, 5 matching labels, 0 false; not clean held-out). The detector is frozen: further changes are post-hoc, not clean held-out. Day-ahead kVA forecast + stacking watch + flexible-load shift plan done (`src/forecast.py`, notebook 07): daily-peak MAPE 5.4%, 59% of days within ±5% (per-day ±5% not achievable: noise floor); the three >1,000 kVA days are load stacking, caught only by the stacking watch (in-sample). Post-hoc: demand and EV rules (notebook 08). Built 10 Nov: bill reconciliation (`src/bills.py`; all 36 bills rebuild; demand = min(max(MD, 75% CD), CD) × rate + penalty on MD > CD), T9 attribution (`src/attribution.py`), alert cards, savings plan + Option C stats (`src/savings.py`; identified 3.0% of bill — below the 8–12% target, stated honestly), assistant (`src/assistant.py`), Streamlit app (`app.py`, data from `src/build_app_data.py`). Built 10 Nov (later, post-hoc): `src/peak_risk.py` (T7: bias correction, P(>1,000 kVA), stacking scenario from earlier breach days → T7 passes), `src/recalibration.py` (kW/TR staging rule — BMS chillers_running undercounts; threshold from the empty gap in March kW/TR; CHW cost from metered 6.5–10 % penalty; staging ₹ 0.23→1.04× key, CHW 0.5→0.9×), savings now 5.9% (7.1% with pump-VFD capital note). Rating set frozen as 20 IDs in `src/feedback.py`. Linux/cloud: `uv sync --python <system python>` works without the Windows .venv. Details in `CONTEXT.md` §18, §22.
 Live year and feed (15 Nov): `data/live/` is a **synthetic** year, 1 Oct 2026 – 30 Sep 2027 (`tools/make_live_year.py`: source weeks of the original year,

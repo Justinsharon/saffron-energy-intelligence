@@ -1,0 +1,175 @@
+{
+ "site": "GGN",
+ "trained_on": "Oct 2025 – Sep 2026 (original year only; never refitted)",
+ "dates": [
+  "2026-10-02",
+  "2027-09-29"
+ ],
+ "context": "live year Oct 2026 – Sep 2027 (synthetic, simulated meters); last year's events cleared",
+ "pf": 0.9697,
+ "tariff": {
+  "energy": 7.313,
+  "fsa": 0.484,
+  "duty": 0.103,
+  "peak": 1.03,
+  "offpeak": -0.772,
+  "penalty": 597.4
+ },
+ "curve": {
+  "edges": [
+   20,
+   80,
+   130,
+   200,
+   280
+  ],
+  "values": [
+   0.6714,
+   0.6133,
+   0.6536,
+   0.6199
+  ]
+ },
+ "ahu_overrun_kwh": {
+  "corporate": 77.6,
+  "social": 62.9
+ },
+ "risk": {
+  "bias": 1.03402,
+  "upper_factor": 1.08294,
+  "ratios": [
+   1.0,
+   0.92442,
+   1.07767,
+   1.03892,
+   1.06917,
+   0.92102,
+   0.97783,
+   0.96834,
+   1.03351,
+   0.96238,
+   0.90887,
+   0.96995,
+   0.97658,
+   0.98131,
+   0.90079,
+   1.11028,
+   1.06959,
+   0.94778,
+   0.93025,
+   0.99499,
+   0.8992,
+   1.08082,
+   1.32117,
+   0.93597,
+   0.97139,
+   0.95081,
+   0.9083,
+   1.04807,
+   1.05806,
+   1.02061,
+   1.06659,
+   0.99222,
+   1.01746,
+   1.07658,
+   0.99833,
+   0.95327,
+   1.10305,
+   1.0476,
+   0.98929,
+   1.00411,
+   1.05195,
+   1.31094,
+   1.03039,
+   1.03084,
+   1.28088,
+   1.0526,
+   1.04854,
+   0.9604,
+   1.12887,
+   0.97019,
+   0.9736,
+   1.04626,
+   0.93164,
+   1.00815,
+   0.97376,
+   0.91816,
+   1.04734,
+   0.94164,
+   0.91415,
+   0.93781,
+   0.95963,
+   1.03921,
+   0.94381,
+   0.98918,
+   0.92827,
+   1.03396,
+   1.01302,
+   1.10812,
+   1.08613,
+   1.03836,
+   1.06122,
+   0.93728,
+   0.94304,
+   0.97373,
+   1.008,
+   1.03927,
+   1.02962
+  ],
+  "stack_increment": 212.8,
+  "stack_basis": "average of earlier breach days (12 May, 18 Jun, 25 Jun)",
+  "stack_table": [
+   {
+    "load": "Banquet AHUs",
+    "actual_kw": 128.7,
+    "typical_kw": 44.3,
+    "extra_kw": 84.4
+   },
+   {
+    "load": "Laundry",
+    "actual_kw": 150.6,
+    "typical_kw": 74.2,
+    "extra_kw": 76.4
+   },
+   {
+    "load": "Water heating",
+    "actual_kw": 67.0,
+    "typical_kw": 21.4,
+    "extra_kw": 45.5
+   }
+  ],
+  "cd": 1000,
+  "warn": 920,
+  "watch_frac": 0.9
+ },
+ "cooling_model": {
+  "hourly_cv_rmse_pct": 5.0,
+  "hourly_nmbe_pct": 0.12,
+  "monthly_cv_rmse_pct": 1.8,
+  "monthly_nmbe_pct": 0.11,
+  "hours": 8732,
+  "scheme": "leave-one-month-out on Oct 2025 – Sep 2026"
+ },
+ "ranges": {
+  "rooms": [
+   0,
+   220
+  ],
+  "guests_in_house": [
+   125,
+   378
+  ],
+  "covers": [
+   222,
+   605
+  ],
+  "event_guests": {
+   "corporate": 318,
+   "social": 648
+  },
+  "event_start_hours": [
+   9,
+   19
+  ]
+ }
+}

@@ -214,3 +214,16 @@ def validate(acts: list) -> None:
             raise ValueError("banquet AHU on more than 2 h before the event")
         if not math.isfinite(a["saving_inr"]):
             raise ValueError("saving is not a number")
+
+
+def risk_for(kva: list, cal: dict) -> dict:
+    """src/peak_risk.assess applied to a plan's own hourly kVA with the exported calibration (same as web/src/plan.ts riskFor)."""
+    raw = max(kva)
+    hour = kva.index(raw)
+    peak = raw * cal["bias"]
+    upper, stack = peak * cal["upper_factor"], peak + cal["stack_increment"]
+    r = cal["ratios"]
+    p = sum(1 for x in r if x >= cal["cd"] / peak) / len(r) if len(r) >= 10 else None
+    level = ("BREACH RISK" if upper >= cal["cd"] or stack >= cal["cd"] else "WARNING" if upper >= cal["warn"]
+             else "STACKING WATCH" if stack >= cal["watch_frac"] * cal["cd"] else "OK")
+    return dict(raw_peak_kva=raw, hour=hour, peak_kva=peak, upper_kva=upper, stack_kva=stack, p_exceed=p, level=level)

@@ -1,0 +1,10 @@
+# Upload only what the API image needs: Dockerfile, api/, src/, models/. Everything else stays local
+# (web/, node_modules, .venv, notebooks, data/, the raw .xlsx / .docx, tests, tools).
+/*
+!/Dockerfile
+!/.gcloudignore
+!/api/
+!/src/
+!/models/
+__pycache__/
+*.pyc

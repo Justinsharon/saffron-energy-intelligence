@@ -62,14 +62,7 @@ def data(folder: Path):
             m.CLEAN = o
 
 
-class Ens:
-    """Ridge + LightGBM averaged, as src/baseline.py."""
-    def fit(self, d, y):
-        self.r, self.g = make_ridge().fit(d, y), make_gbm().fit(d[GBM_FEATURES], y)
-        return self
-
-    def predict(self, d):
-        return (self.r.predict(d) + self.g.predict(d[GBM_FEATURES])) / 2
+from plan_models import Ens  # noqa: E402  (ridge + LightGBM ensemble; in src/ so saved models refer to an importable class)
 
 
 def tr_frame() -> pd.DataFrame:
