@@ -3,12 +3,19 @@
 gurugram_hourly(): collapse the 15-minute Gurugram incomer into the same hourly schema that
 Jaipur and Goa use, so all three hotels can be compared and modelled on one grid.
 """
+import os
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
 
-CLEAN = Path(__file__).resolve().parents[1] / "data" / "clean"
+# Data folder for the whole pipeline. Default: the cleaned original year. SAFFRON_DATA=data/live runs the same code on the
+# synthetic live year (tools/run_live_year.py); a relative path is taken from the repo root.
+ROOT = Path(__file__).resolve().parents[1]
+DEFAULT_CLEAN = ROOT / "data" / "clean"
+_env = os.environ.get("SAFFRON_DATA")
+CLEAN = (Path(_env) if Path(_env).is_absolute() else ROOT / _env).resolve() if _env else DEFAULT_CLEAN
+APP = ROOT / "data" / "app" if CLEAN == DEFAULT_CLEAN else CLEAN / "app"     # precomputed app tables for that data folder
 SITES = {"GGN": "Gurugram", "JAI": "Jaipur", "GOA": "Goa"}
 ROOMS = {"GGN": 220, "JAI": 160, "GOA": 140}
 CONTRACT_KVA = {"GGN": 1000, "JAI": 700, "GOA": 600}

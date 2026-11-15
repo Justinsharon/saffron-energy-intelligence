@@ -17,9 +17,8 @@ import pandas as pd
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 from alert_cards import CHART  # noqa: E402
-from features import CLEAN, SITES  # noqa: E402
+from features import APP, CLEAN, SITES  # noqa: E402
 
-APP = CLEAN.parent / "app"
 OUT = ROOT / "web" / "public" / "data"
 FN_OUT = ROOT / "web" / "netlify" / "functions" / "data"     # copy the assistant tools read
 SITE_LIST = ["GGN", "JAI", "GOA"]

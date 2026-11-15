@@ -14,10 +14,9 @@ import urllib.request
 
 import pandas as pd
 
-from features import CLEAN
+from features import APP, CLEAN, ROOT
 
-APP = CLEAN.parent / "app"
-LOCAL = CLEAN.parent / "feedback" / "ratings.csv"
+LOCAL = ROOT / "data" / "feedback" / "ratings.csv"
 GIST_FILE = "ratings.csv"
 COLUMNS = ["time", "rater", "role", "alert_id", "usefulness", "would_act", "cause_right", "comment", "round"]
 ROUND = 2          # card wording version: 1 = before the 10 Nov dry-run fixes (no "round" column saved), 2 = after

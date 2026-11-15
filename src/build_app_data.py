@@ -1,6 +1,6 @@
 """Precompute everything the web app reads, so the hosted app starts in seconds and never refits the detector.
 
-Writes data/app/*.parquet. Run after any change to the cleaned data, detector or bills:  uv run python src/build_app_data.py
+Writes data/app/*.parquet (or <SAFFRON_DATA>/app). Run after any change to the cleaned data, detector or bills:  uv run python src/build_app_data.py
 """
 import pandas as pd
 
@@ -8,12 +8,11 @@ from alert_cards import build_cards, card_text, fault_cards
 from attribution import production_baseline
 from bills import reconcile_all
 from detector import site_frame
-from features import CLEAN
-
-APP = CLEAN.parent / "app"
+from features import APP, CLEAN
 
 
-def main():
+def main(recal: dict | None = None):
+    """recal: frozen recalibration fit for a non-default data folder (tools/run_live_year.py); None = fit as before."""
     APP.mkdir(exist_ok=True)
     for s in ["GGN", "JAI", "GOA"]:
         d = site_frame(s)
@@ -26,7 +25,7 @@ def main():
             d = d.merge(sub, on="timestamp", how="left")
         d.drop(columns=["date"]).to_parquet(APP / f"frame_{s}.parquet", index=False)
         print(s, d.shape)
-    c = build_cards()
+    c = build_cards(recal)
     c["text"] = [card_text(r) for r in c.itertuples()]
     c.to_parquet(APP / "cards.parquet", index=False)
     fault_cards().to_parquet(APP / "faults.parquet", index=False)

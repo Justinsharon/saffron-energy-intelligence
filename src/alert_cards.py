@@ -54,13 +54,14 @@ def _meta(rule: str) -> dict:
     return WASTE_TYPES.get(rule) or EXTRA_TYPES[rule]
 
 
-def build_cards() -> pd.DataFrame:
+def build_cards(recal: dict | None = None) -> pd.DataFrame:
+    """recal: a frozen recalibration.fit() result (the live-year run passes the original year's); None fits on CLEAN as before."""
     a = pd.read_parquet(CLEAN / "alerts.parquet").assign(post_hoc=False)
     x = pd.read_parquet(CLEAN / "alerts_demand_ev.parquet").assign(post_hoc=True)
     x["excess_kwh"] = 0.0
     import recalibration as RC                       # post-hoc (10 Nov): kW/TR staging rule + measured CHW penalty
     fr = RC._frame()
-    F = RC.fit(fr)
+    F = recal if recal is not None else RC.fit(fr)
     k = RC.staging_kwtr_alerts(fr, F).assign(post_hoc=True)
     k["inr_per_hour"] = k.cost_inr / k.flagged_h
     k["inr_per_day"] = k.inr_per_hour * 24

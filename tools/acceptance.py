@@ -8,9 +8,8 @@ from pathlib import Path
 import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
-from features import CLEAN  # noqa: E402
+from features import APP, CLEAN  # noqa: E402
 
-APP = CLEAN.parent / "app"
 c = pd.read_parquet(APP / "cards.parquet")
 ev = pd.read_parquet(CLEAN / "events.parquet")
 res = []

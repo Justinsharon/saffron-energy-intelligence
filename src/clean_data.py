@@ -15,8 +15,8 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-ROOT = Path(__file__).resolve().parents[1]
-OUT = ROOT / "data" / "clean"
+from features import CLEAN, ROOT
+OUT = CLEAN                      # SAFFRON_DATA routes this too (src/features.py)
 MIN_FAULT_INTERVALS = 4          # >= 1 h of 15-min readings identical in all billed columns
 SWAP_MONTH = ("2026-03-01", "2026-04-01")
 

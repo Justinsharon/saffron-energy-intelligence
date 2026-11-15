@@ -14,9 +14,8 @@ import re
 
 import pandas as pd
 
-from features import CLEAN, SITES
+from features import APP, CLEAN, SITES
 
-APP = CLEAN.parent / "app"
 MODEL = os.environ.get("PS12_MODEL", "claude-sonnet-5-5")
 MONTHS = {m: i for i, m in enumerate(["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"], 1)}
 

@@ -11,9 +11,8 @@ import plotly.graph_objects as go
 import streamlit as st
 
 sys.path.insert(0, str(Path(__file__).parent / "src"))
-from features import CLEAN, SITES  # noqa: E402
+from features import APP, CLEAN, SITES  # noqa: E402
 
-APP = CLEAN.parent / "app"
 st.set_page_config(page_title="Saffron Suites · Energy Intelligence", page_icon="⚡", layout="wide")
 
 SEV_COLOR = {"High": "#c0392b", "Medium": "#d68910", "Low": "#5d6d7e", "Data quality": "#7d3c98"}

@@ -15,9 +15,8 @@ import pandas as pd
 from scipy import stats
 
 from bills import TOD, _in_window, tariff
-from features import CLEAN, SITES
+from features import APP, CLEAN, SITES
 
-APP = CLEAN.parent / "app"
 PF_TARGET = 0.99
 NIGHT_LIGHT_CUT = 0.30          # assumption: corridor / facade / landscape lighting dimmed or sensor-switched after midnight
 VFD_SHARE = 0.30                # capital note: typical saving converting constant-speed pumps to variable flow
