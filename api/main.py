@@ -284,11 +284,10 @@ async def plan(req: Request):
         win.loc[on_day, "temp_c"] = clamped
 
     bookings = read_bookings(body.get("bookings"), rng, notes)
-    if from_pattern or not body.get("bookings"):
-        bits = ", ".join(from_pattern)
-        notes.append(f"From the usual pattern for a {WEEKDAY[day.day_of_week]} at this time of year: "
-                     + (bits + ". " if bits else "")
-                     + ("No banquet bookings were given, so none are planned for." if not body.get("bookings") else ""))
+    if from_pattern:
+        notes.append(f"From the usual pattern for a {WEEKDAY[day.day_of_week]} at this time of year: {', '.join(from_pattern)}.")
+    if not body.get("bookings"):
+        notes.append("No banquet bookings were given, so none are planned for.")
 
     frame = add_bookings(win, day, bookings)
     p = predict(MODELS, frame)
