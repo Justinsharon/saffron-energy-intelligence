@@ -331,3 +331,6 @@ input.name { width: 180px; }
   .plan-head .btn-row { width: 100%; }
 }
 .ask-inline { background: none; border: 0; padding: 0; color: var(--coral); font: inherit; font-weight: 600; cursor: pointer; text-decoration: underline; }
+.read-notes { background: var(--paper); border-left: 4px solid var(--amber); border-radius: 12px; padding: 10px 16px; margin: 6px 0 12px; font-size: 13.5px; color: var(--ink-2); }
+.read-notes ul { margin: 6px 0 0; padding-left: 18px; }
+.read-notes li { margin: 2px 0; }

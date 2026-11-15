@@ -30,6 +30,12 @@
    0.6199
   ]
  },
+ "chw_pct_per_c": [
+  0.0432,
+  0.0512,
+  0.0681,
+  0.069
+ ],
  "ahu_overrun_kwh": {
   "corporate": 77.6,
   "social": 62.9

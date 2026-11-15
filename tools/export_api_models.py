@@ -73,6 +73,7 @@ def main():
         tariff=dict(energy=float(t["Energy charge"]), fsa=float(t["Fuel surcharge adjustment (FSA)"]), duty=float(t["Electricity duty"]),
                     peak=float(t["Peak ToD surcharge"]), offpeak=float(t["Off-peak ToD rebate"]), penalty=float(t["Excess demand penalty"])),
         curve=dict(edges=[20, 80, 130, 200, 280], values=[round(float(v), 4) for v in F["curve"].to_numpy()]),
+        chw_pct_per_c=[round(float(v) / 1.5, 4) for v in F["chw_penalty"].reindex(F["curve"].index).fillna(F["chw_penalty"].mean()).to_numpy()],
         ahu_overrun_kwh=EP.ahu_overrun(sub_o, ev), risk=cal, cooling_model=acc,
         ranges=dict(rooms=[0, 220], guests_in_house=[int(occ.guests_in_house.min()), int(occ.guests_in_house.max())],
                     covers=[int(occ.covers_served_fnb.min()), int(occ.covers_served_fnb.max())],

@@ -104,6 +104,8 @@ function plainMeasure(m: string): string {
 const PLAIN_DRIVER: Record<string, string> = { Weather: "weather", Occupancy: "guests in house", Events: "events", Calendar: "days in the month", Anomalies: "waste and faults (incl. capacitor panel)", Demand: "peak-demand charges", Diesel: "diesel generator", "Tariff mix": "time-of-day pricing", Unexplained: "not explained" };
 // Live context, set per request: today's date in India and where the site's own static files live.
 let ORIGIN = "";
+// The plan API on Cloud Run (CLAUDE.md "API"); called directly from the function (the /api proxy is for the browser).
+const PLAN_API = process.env.PLAN_API_URL || "https://saffron-api-579804303171.asia-south1.run.app";
 const istToday = () => new Date(Date.now() + 5.5 * 3.6e6).toISOString().slice(0, 10);
 const addDays = (d: string, k: number) => new Date(Date.parse(d + "T00:00:00Z") + k * 864e5).toISOString().slice(0, 10);
 async function ggnTmax(date: string): Promise<number | null> {
@@ -153,15 +155,23 @@ const TOOLS: Record<string, { fn: (a: J) => J | Promise<J>; desc: string; params
         return { hotel: "Gurugram", date, plan: `saved by ${p.by} at ${p.at}`, bookings: p.inputs.bookings, notes: p.inputs.notes || undefined,
                  total_saving_inr: r0(p.total_inr), steps: steps.filter((x) => overlaps(x.from, x.to)), part_of_day: a.part_of_day || undefined };
       }
+      // not saved: the same source as the page - the plan API (models on the usual inputs), else the browser rules on the exported inputs
+      const suggest = (src: string, actions: J[], total: number, extra: J) => ({ hotel: "Gurugram", date,
+        plan: `not saved yet: this is the suggested plan for the usual rooms and covers, with no banquet bookings entered (${src})`, total_saving_inr: r0(total),
+        steps: byTime(actions as any).filter((x) => overlaps(x.start, x.end)).map((x) => ({ from: x.start, to: x.end, what: x.equipment, setting: x.setting, why: x.reason, saving_inr: r0(x.saving_inr), status: "suggested" })),
+        part_of_day: a.part_of_day || undefined, ...extra });
+      try {
+        const r = await fetch(`${PLAN_API}/plan`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ date }), signal: AbortSignal.timeout(4000) });
+        const j = await r.json();
+        if (r.status === 422) return { error: j.error };
+        if (r.ok) return suggest("plan service", j.actions, j.total_saving_inr, { weather: j.inputs_used?.weather, how_inputs_were_read: j.notes });
+      } catch { /* fall back to the browser rules below */ }
       let day: PlanDay;
       try { const r = await fetch(`${ORIGIN}/data/plan/${date}.json`); if (!r.ok) throw new Error(); day = await r.json(); }
       catch { return { error: `No plan inputs for ${date} (plans cover the next few weeks).` }; }
       const tmax = await ggnTmax(date);
       const res = planFor(day, tmax != null ? { tmax } : {});
-      return { hotel: "Gurugram", date, plan: "not saved yet: this is the suggested plan for the usual rooms and covers, with no banquet bookings entered",
-               top_temperature_c: Math.round(tmax ?? day.template_tmax), total_saving_inr: r0(res.total_inr),
-               steps: byTime(res.actions).filter((x) => overlaps(x.start, x.end)).map((x) => ({ from: x.start, to: x.end, what: x.equipment, setting: x.setting, why: x.reason, saving_inr: r0(x.saving_inr), status: "suggested" })),
-               part_of_day: a.part_of_day || undefined };
+      return suggest("offline estimate: the plan service was not reachable", res.actions, res.total_inr, { top_temperature_c: Math.round(tmax ?? day.template_tmax) });
     },
   },
   today_status: {

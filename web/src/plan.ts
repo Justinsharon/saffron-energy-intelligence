@@ -28,7 +28,8 @@ export interface Booking { hall: Hall; start: string; end: string; guests: numbe
 interface Resp { start: number[]; end: number[]; during: number }
 export interface Tariff { energy: number; fsa: number; duty: number; peak: number; offpeak: number; penalty: number }
 export interface PlanRef { kwtr_ly: (number | null)[]; laundry_peak_kwh: number; water_peak_kwh: number; ev_kw: number[];
-  curve: { edges: number[]; values: number[] }; ahu_overrun_kwh: { corporate: number; social: number }; matched_days: string[] }
+  curve: { edges: number[]; values: number[] }; ahu_overrun_kwh: { corporate: number; social: number }; matched_days: string[];
+  chw_pct_per_c?: number[] }      // measured chiller power saved per °C of setpoint, per load band (recalibration.fit)
 export interface PlanDay {
   date: string; site: string; template: string; template_tmax: number; pf: number; tariff: Tariff;
   defaults: { rooms: number; guests: number; covers: number; events: Booking[] };
@@ -49,6 +50,13 @@ export function kwtrPlan(tr: number, curve: PlanRef["curve"]): number | null {
   if (tr * TR_MARGIN > CH1_MAX) return null;
   for (let i = 1; i < curve.edges.length; i++) if (tr <= curve.edges[i]) return curve.values[i - 1];
   return curve.values[curve.values.length - 1];
+}
+/** Chiller power saved per °C of warmer chilled water at this load: measured per band, else the guide's 3.5 %. */
+export function chwPct(tr: number, ref: PlanRef): number {
+  const p = ref.chw_pct_per_c;
+  if (!p || !p.length) return SETPOINT_PCT_PER_C;
+  for (let i = 1; i < ref.curve.edges.length; i++) if (tr <= ref.curve.edges[i]) return p[i - 1];
+  return p[p.length - 1];
 }
 const inWin = (h: number, [a, b]: [number, number]) => (a < b ? a <= h && h < b : h >= a || h < b);
 export function windows<T>(keys: T[]): [number, number, T][] {
@@ -118,9 +126,13 @@ export function planDay(hourlyTr: number[], hourlyKva: number[], tempC: number[]
   const sp = Array.from({ length: 24 }, (_, h) => (tempC[h] < RESET_BELOW_C && stage(hourlyTr[h]) !== "CH-1+CH-3" ? CHW_RESET : CHW_STD));
   for (const [s, e, v] of windows(sp)) {
     let sav = 0;
-    if (v > CHW_STD) for (let h = s; h < e; h++) sav += hourlyTr[h] * (kwtrPlan(hourlyTr[h], ref.curve) ?? 0) * SETPOINT_PCT_PER_C * (v - CHW_STD) * rate;
+    const pcts = hourlyTr.slice(s, e).map((x) => chwPct(x, ref));
+    if (v > CHW_STD) for (let h = s; h < e; h++) sav += hourlyTr[h] * (kwtrPlan(hourlyTr[h], ref.curve) ?? 0) * pcts[h - s] * (v - CHW_STD) * rate;
     const t = tempC.slice(s, e);
-    const why = v > CHW_STD ? `Outdoor ${f0(Math.min(...t))}–${f0(Math.max(...t))} °C and one chiller running: warmer chilled water still holds comfort and saves about 3.5 % of chiller power per °C.`
+    const lo = Math.min(...pcts) * 100, hi = Math.max(...pcts) * 100;
+    const span = hi - lo < 0.05 ? `${lo.toFixed(1)} %` : `${lo.toFixed(1)}–${hi.toFixed(1)} %`;
+    const src = ref.chw_pct_per_c?.length ? "measured on these chillers" : "engineering guide";
+    const why = v > CHW_STD ? `Outdoor ${f0(Math.min(...t))}–${f0(Math.max(...t))} °C and one chiller running: warmer chilled water still holds comfort and saves about ${span} of chiller power per °C at this load (${src}).`
       : "Standard setting: outdoor 24 °C or warmer, or two chillers needed.";
     acts.push({ kind: "plan", group: "chw", start: hh(s), end: hh(e), equipment: "Chilled-water supply setpoint", setting: `${v.toFixed(1)} °C`, reason: why, saving_inr: sav, guardrail: GUARD.chw, setpoint_c: v });
   }

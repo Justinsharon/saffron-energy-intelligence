@@ -178,6 +178,8 @@ def main(first: date, n: int):
     tariff = dict(energy=float(t["Energy charge"]), fsa=float(t["Fuel surcharge adjustment (FSA)"]), duty=float(t["Electricity duty"]),
                   peak=float(t["Peak ToD surcharge"]), offpeak=float(t["Off-peak ToD rebate"]), penalty=float(t["Excess demand penalty"]))
     curve = dict(edges=[20, 80, 130, 200, 280], values=[round(float(v), 4) for v in F["curve"].to_numpy()])
+    # measured setpoint penalty (5.5 vs 7.0 °C, per load band) -> chiller power per °C; replaces the guide's 3.5 %
+    chw_pct = [round(float(v) / 1.5, 4) for v in F["chw_penalty"].reindex(F["curve"].index).fillna(F["chw_penalty"].mean()).to_numpy()]
 
     with data(LIVE):
         live = build_features(SITE)                     # live-year weather, rooms sold, covers (template context)
@@ -234,7 +236,7 @@ def main(first: date, n: int):
                              kw_per_guest=cen("kw", "g+", "g-", D_GUESTS), kw_per_c=cen("kw", "t+", "t-", D_TEMP), tr_per_c=cen("tr", "t+", "t-", D_TEMP),
                              tr_per_room=cen("tr", "rooms+", "rooms-", D_ROOMS), tr_per_guest=cen("tr", "g+", "g-", D_GUESTS)),
                    banquet=banquet,
-                   ref=dict(matched_refs(orig, sub_o, d, float(np.mean(day_tr))), curve=curve, ahu_overrun_kwh=overrun))
+                   ref=dict(matched_refs(orig, sub_o, d, float(np.mean(day_tr))), curve=curve, ahu_overrun_kwh=overrun, chw_pct_per_c=chw_pct))
         txt = json.dumps(rec, separators=(",", ":"), ensure_ascii=False)
         assert len(txt) < 100_000, f"{d:%Y-%m-%d}: {len(txt)} bytes"
         (OUT / f"{d:%Y-%m-%d}.json").write_text(txt, encoding="utf-8")

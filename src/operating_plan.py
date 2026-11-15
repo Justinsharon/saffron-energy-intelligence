@@ -17,7 +17,7 @@ CH3_MAX, CH1_MAX, PAIR_MAX = 130.0, 280.0, 430.0     # TR: CH-3 alone, CH-1 alon
 TR_MARGIN = 1.10                                      # +10 % on forecast TR before switching up
 CHW_STD, CHW_RESET, CHW_FLOOR = 7.0, 8.0, 6.5          # °C; never below 6.5
 RESET_BELOW_C = 24.0                                  # 8.0 °C only when outdoor is below this
-SETPOINT_PCT_PER_C = 0.035                            # guide: ~3.5 % chiller power per °C of setpoint
+SETPOINT_PCT_PER_C = 0.035                            # guide's ~3.5 % per °C: fallback only when no measured value is supplied
 PEAK = (18, 22)                                       # GGN peak tariff window [start, end)
 OFFPEAK = (23, 5)                                     # GGN off-peak window (wraps midnight)
 DEMAND_WATCH_KVA, CD_KVA = 920.0, 1000.0              # EV-throttle / laundry line, contract demand
@@ -52,6 +52,18 @@ def kwtr_plan(tr: float, curve: dict) -> float | None:
         if tr <= hi:
             return v
     return curve["values"][-1]
+
+
+def chw_pct(tr: float, ref: dict) -> float:
+    """Chiller power saved per °C of warmer chilled water at this load: measured on these chillers (recalibration.fit, 5.5 vs 7.0 °C,
+    per load band, divided by 1.5 °C; 4.3-6.9 %), else the guide's 3.5 %."""
+    pct = ref.get("chw_pct_per_c")
+    if not pct:
+        return SETPOINT_PCT_PER_C
+    for hi, v in zip(ref["curve"]["edges"][1:], pct):
+        if tr <= hi:
+            return v
+    return pct[-1]
 
 
 def in_win(h: int, w: tuple) -> bool:
@@ -146,11 +158,15 @@ def plan_day(hourly_tr, hourly_kva, temp_c, bookings, pf, ref=None, tariff=None)
     sp = [CHW_RESET if (temp_c[h] < RESET_BELOW_C and stage(hourly_tr[h]) != "CH-1+CH-3") else CHW_STD for h in range(24)]
     for s, e, v in windows(sp):
         sav = 0.0
+        pcts = [chw_pct(hourly_tr[h], ref) for h in range(s, e)]
         if v > CHW_STD:
-            for h in range(s, e):
+            for h, pc in zip(range(s, e), pcts):
                 p = kwtr_plan(hourly_tr[h], ref["curve"])
-                sav += hourly_tr[h] * (p or 0.0) * SETPOINT_PCT_PER_C * (v - CHW_STD) * rate
-        why = (f"Outdoor {min(temp_c[s:e]):.0f}–{max(temp_c[s:e]):.0f} °C and one chiller running: warmer chilled water still holds comfort and saves about 3.5 % of chiller power per °C."
+                sav += hourly_tr[h] * (p or 0.0) * pc * (v - CHW_STD) * rate
+        lo_p, hi_p = min(pcts) * 100, max(pcts) * 100
+        span = f"{lo_p:.1f} %" if hi_p - lo_p < 0.05 else f"{lo_p:.1f}–{hi_p:.1f} %"
+        src = "measured on these chillers" if ref.get("chw_pct_per_c") else "engineering guide"
+        why = (f"Outdoor {min(temp_c[s:e]):.0f}–{max(temp_c[s:e]):.0f} °C and one chiller running: warmer chilled water still holds comfort and saves about {span} of chiller power per °C at this load ({src})."
                if v > CHW_STD else "Standard setting: outdoor 24 °C or warmer, or two chillers needed.")
         acts.append(dict(kind="plan", group="chw", start=hh(s), end=hh(e), equipment="Chilled-water supply setpoint", setting=f"{v:.1f} °C",
                          reason=why, saving_inr=sav, guardrail=GUARD["chw"], setpoint_c=v))

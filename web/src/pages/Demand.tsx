@@ -7,7 +7,8 @@ import { useWeather } from "../live";
 import { useFeeds } from "../feed";
 import { addMs, DAY_MS, fmtD, inr, istNow, n, parse } from "../format";
 import { LOAD } from "../copy";
-import { actionId, byTime, hh, planFor, riskFor, TAG, type Action, type Booking, type Hall, type PlanDay, type RiskCal } from "../plan";
+import { actionId, hh, TAG, type Booking, type Hall, type PlanDay, type RiskCal } from "../plan";
+import { getPlan, type PlanResult } from "../planApi";
 import type { PlanView, SavedAction } from "../planlog";
 import { loadPlan, plannerName, postPlan, setPlannerName } from "../planStore";
 
@@ -188,9 +189,23 @@ function TomorrowPlan() {
 
   const hourly = wx?.hourly.GGN[date];
   const temps = hourly && hourly.length === 24 ? hourly : null;
-  const res = useMemo(() => (day && form ? planFor(day, { rooms: form.rooms, guests: form.guests, covers: form.covers, bookings: form.bookings, temps }) : null), [day, form, temps]);
-  const actions: SavedAction[] = useMemo(() => (res ? byTime(res.actions).map((a) => ({ ...a, id: actionId(a) })) : []), [res]);
-  const risk = res && idx ? riskFor(res.forecast.kva, idx.risk) : null;
+  // the plan API (models on the actual inputs), 600 ms after the last change; offline estimate in the browser if it fails or is slow
+  const [res, setRes] = useState<PlanResult | null>(null);
+  const [planning, setPlanning] = useState(false);
+  const reqKey = form ? JSON.stringify([date, form.rooms, form.guests, form.covers, form.bookings]) : "";
+  useEffect(() => {
+    if (!day || !form) return;
+    let on = true;
+    setPlanning(true);
+    const t = setTimeout(() => {
+      getPlan({ date, rooms: form.rooms, guests: form.guests, covers: form.covers, bookings: form.bookings }, { day, temps, cal: idx?.risk ?? null })
+        .then((r) => on && setRes(r)).catch(() => on && setRes(null)).finally(() => on && setPlanning(false));
+    }, 600);
+    return () => { on = false; clearTimeout(t); };
+  }, [reqKey, day, temps, idx]);
+  useEffect(() => setRes(null), [date]);
+  const actions: SavedAction[] = useMemo(() => (res ? res.actions.map((a) => ({ ...a, id: actionId(a) })) : []), [res]);
+  const risk = res?.risk ?? null;
   const sig = (xs: { id: string; setting: string; end: string }[]) => xs.map((a) => `${a.id}=${a.setting}@${a.end}`).join(";");
   const dirty = !saved?.plan || sig(saved.plan.actions) !== sig(actions);
   const approved = actions.filter((a) => saved?.decisions[a.id]?.event === "approve").length;
@@ -203,7 +218,7 @@ function TomorrowPlan() {
     finally { setBusy(false); }
   }
   const submit = () => form && res && send({ event: "submit", inputs: { rooms: form.rooms, guests: form.guests, covers: form.covers, bookings: form.bookings, notes: form.notes,
-    temps_source: temps ? "Open-Meteo hourly forecast" : "typical for the time of year" }, actions });
+    temps_source: res?.weather ?? "", plan_source: res?.source === "api" ? "plan API" : "offline estimate (browser)" }, actions });
   async function decide(a: SavedAction, ev: "approve" | "skip" | "edit", extra: Record<string, string> = {}) {
     if (!name.trim()) { setErr("Enter your name first: every decision is logged with who made it."); return; }
     setPlannerName(name);
@@ -227,8 +242,7 @@ function TomorrowPlan() {
         </label>
       </div>
 
-      {day === undefined || (day && !form) ? <p className="muted">Loading the forecast…</p> : day === null ? <p className="muted">No forecast is prepared for {fmtD(date)} yet (plans cover the next few weeks).</p> : form && res && (
-        <>
+      {day === undefined || (day && !form) ? <p className="muted">Loading the forecast…</p> : day === null ? <p className="muted">No forecast is prepared for {fmtD(date)} yet (plans cover the next few weeks).</p> : form && (<>
           <section className="panel" aria-labelledby="bk">
             <h2 id="bk" style={{ marginTop: 0 }}>Bookings for {title}</h2>
             <div className="grid g3 form3">
@@ -246,15 +260,18 @@ function TomorrowPlan() {
               <span className="small muted">Notes for the duty team</span>
               <textarea rows={2} value={form.notes} onChange={(e) => set("notes", e.target.value)} placeholder="e.g. VIP arrival 15:00, laundry short-staffed" />
             </label>
-            <p className="small muted" style={{ marginBottom: 0 }}>Weather: {temps ? `hourly forecast from Open-Meteo, top ${Math.round(Math.max(...temps))} °C` : wx === undefined ? "loading the forecast…" : `typical for the time of year (top ${Math.round(day.template_tmax)} °C); the live forecast covers about 16 days`}. Rooms and covers are suggested from the usual pattern for this time of year.</p>
+            <p className="small muted" style={{ marginBottom: 0 }}>Weather: {res ? `${res.weather || "typical temperatures for this date"}, top ${Math.round(Math.max(...res.forecast.temp))} °C` : "checking…"}. Rooms and covers are suggested from the usual pattern for this time of year.</p>
           </section>
+
+          {!res ? <p className="muted" style={{ marginTop: 18 }}>Working out the plan…</p> : (<>
 
           <h2>Forecast</h2>
           <ForecastCharts kw={res.forecast.kw} kva={res.forecast.kva} tr={res.forecast.tr} />
 
           <div className="section-title plan-head">
             <div>
-              <h2 style={{ margin: 0 }}>Operating plan</h2>
+              <h2 style={{ margin: 0 }}>Operating plan {res.source === "offline" && <span className="chip c-med" style={{ verticalAlign: "middle" }}>offline estimate</span>}
+                {planning && <span className="small muted" style={{ fontWeight: 500, marginLeft: 8 }}>updating…</span>}</h2>
               <p className="small muted" style={{ margin: "4px 0 0" }}><strong className="plan-total">{inr(res.total_inr)}</strong> planned saving vs how last year ran on similar days · <strong>{approved} of {actions.length}</strong> approved
                 {saved?.plan && <> · saved by {saved.plan.by} at {saved.plan.at.slice(11)}{saved.storage === "device" ? " (this device only: shared storage is not set up)" : ""}</>}</p>
             </div>
@@ -263,6 +280,12 @@ function TomorrowPlan() {
               <button className="btn accent" disabled={busy || !name.trim() || !dirty} onClick={() => { setPlannerName(name); submit(); }}>{saved?.plan ? (dirty ? "Save the updated plan" : "Plan saved") : "Save plan"}</button>
             </div>
           </div>
+          {res.notes.length > 0 && (
+            <div className="read-notes">
+              <strong>How we read your inputs</strong>
+              <ul>{res.notes.map((x, i) => <li key={i}>{x}</li>)}</ul>
+            </div>
+          )}
           {err && <div className="guard note-warn" style={{ marginBottom: 10 }}><span aria-hidden>⚠</span><span>{err}</span></div>}
           {saved?.plan && dirty && <p className="small" style={{ color: "var(--coral)", marginTop: 0 }}>The plan has changed since it was saved. Approving a step saves the new version first.</p>}
           <ol className="timeline">
@@ -304,8 +327,8 @@ function TomorrowPlan() {
               </details>
             </>
           )}
-        </>
-      )}
+        </>)}
+      </>)}
     </>
   );
 }
