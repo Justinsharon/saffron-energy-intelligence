@@ -3,16 +3,11 @@ import { Line, LineChart, ResponsiveContainer } from "recharts";
 import { useClock } from "../App";
 import { Gauge, Ticket, type Ack } from "../components/parts";
 import { ICON } from "../App";
-import { SITES, SITE_NAME, useData, type Alert, type Fault, type ForecastDay, type Hotel, type Hourly, type Site } from "../data";
-import { addMs, fmtD, fmtDT, inr, n, parse, iso } from "../format";
+import { SITES, SITE_NAME, useData, type Alert, type ForecastDay, type Hotel, type Site } from "../data";
+import { useFeeds } from "../feed";
+import type { Feed } from "../feedcore";
+import { fmtD, fmtDT, inr, n, parse, iso } from "../format";
 import { pickCell, useLiveDay, useWeather } from "../live";
-
-/** Move an alert from the sample feed's dates to the dates on screen (no-op when looking back). */
-export function shiftAlert(a: Alert, ms: number): Alert {
-  if (!ms) return a;
-  const f = (t: string) => addMs(t, ms);
-  return { ...a, start: f(a.start), end: f(a.end), alert_time: f(a.alert_time), chart: { ...a.chart, t: a.chart.t.map((t) => f(t + ":00").slice(0, 13)) } };
-}
 
 function loadAcks(): Record<string, Ack> {
   try { return JSON.parse(localStorage.getItem("acks") || "{}"); } catch { return {}; }
@@ -33,21 +28,15 @@ export function SiteSwitch({ value, onChange, all = true }: { value: Site | "ALL
 function greeting(h: number) { return h < 4 ? "Hello" : h < 12 ? "Good morning" : h < 17 ? "Good afternoon" : "Good evening"; }
 
 /** Today so far for one hotel: used vs expected, and the last 24 hours as a sparkline. */
-function HotelCard({ s, now, open, atStake, pressed, onClick, temp }: { s: Site; now: string; open: number; atStake: number; pressed: boolean; onClick: () => void; temp?: number | null }) {
-  const hr = useData<Hourly>(`hourly_${s}.json`);
+function HotelCard({ s, feed, open, atStake, pressed, onClick, temp }: { s: Site; feed?: Feed; open: number; atStake: number; pressed: boolean; onClick: () => void; temp?: number | null }) {
   const hotels = useData<Record<Site, Hotel>>("hotels.json");
   const v = useMemo(() => {
-    if (!hr) return null;
-    const key = now.slice(0, 13);
-    const end = hr.t.findIndex((t) => t > key);
-    const stop = end < 0 ? hr.t.length : end;
-    const dayStart = hr.t.findIndex((t) => t.slice(0, 10) === now.slice(0, 10));
-    let a = 0, b = 0;
-    for (let i = Math.max(dayStart, 0); i < stop; i++) { a += hr.a[i]; b += hr.b[i]; }
-    const spark = [];
-    for (let i = Math.max(0, stop - 24); i < stop; i++) spark.push({ a: hr.a[i], b: hr.b[i] });
+    if (!feed) return null;
+    const r = feed.readings, k = r.t.length;
+    const spark = r.t.slice(Math.max(0, k - 24)).map((_, i) => ({ a: r.a[Math.max(0, k - 24) + i], b: r.b[Math.max(0, k - 24) + i] }));
+    const { used_kwh: a, expected_kwh: b } = feed.today;
     return { a, b, pct: b > 0 ? (a / b - 1) * 100 : 0, spark };
-  }, [hr, now]);
+  }, [feed]);
   return (
     <button className="hotel" aria-pressed={pressed} onClick={onClick}>
       <div className="h-top"><span className="h-name">{SITE_NAME[s]}</span><span className="h-rooms">{temp != null ? `${Math.round(temp)} °C · ` : ""}{hotels?.[s].rooms ?? ""} rooms</span></div>
@@ -94,10 +83,11 @@ export function TodayHero() {
 }
 
 export default function Shift() {
-  const { now: shown, dataNow: now, offset, live, go } = useClock();
+  const { now, live, go } = useClock();
+  const shown = now;
   const wx = useWeather();
-  const alerts = useData<Alert[]>("alerts.json");
-  const faults = useData<Fault[]>("faults.json");
+  const feeds = useFeeds(now, live);
+  const alerts = useMemo(() => feeds ? SITES.flatMap((s) => feeds.feeds[s].recent_alerts) : null, [feeds]);
   const days = useData<Record<string, ForecastDay>>("forecast_days.json");
   const [site, setSite] = useState<Site | "ALL">("ALL");
   const [acks, setAcks] = useState<Record<string, Ack>>(loadAcks);
@@ -106,7 +96,7 @@ export default function Shift() {
 
   const per = useMemo(() => {
     const out: Record<Site, { open: Alert[]; stake: number }> = { GGN: { open: [], stake: 0 }, JAI: { open: [], stake: 0 }, GOA: { open: [], stake: 0 } };
-    for (const a of alerts ?? []) if (a.alert_time <= now && a.end > now && a.channel === "Alert") {
+    for (const a of alerts ?? []) if (a.ongoing && a.channel === "Alert") {
       out[a.site].open.push(a); if (a.cost_basis === "per_day") out[a.site].stake += a.per_day;
     }
     return out;
@@ -115,21 +105,20 @@ export default function Shift() {
   const v = useMemo(() => {
     if (!alerts) return null;
     const mine = alerts.filter((a) => site === "ALL" || a.site === site);
-    const open = mine.filter((a) => a.alert_time <= now && a.end > now && a.channel === "Alert")
+    const open = mine.filter((a) => a.ongoing && a.channel === "Alert")
       .sort((x, y) => (y.cost_basis === "per_day" ? y.per_day : y.cost) - (x.cost_basis === "per_day" ? x.per_day : x.cost));
     const dayAgo = iso(new Date(parse(now).getTime() - 864e5));
-    const closed = mine.filter((a) => a.channel === "Alert" && a.end <= now && a.end > dayAgo);
+    const closed = mine.filter((a) => a.channel === "Alert" && !a.ongoing && a.end > dayAgo);
     const digest = mine.filter((a) => a.channel === "Daily digest" && a.alert_time <= now && a.alert_time > dayAgo);
     const stake = open.filter((a) => a.cost_basis === "per_day").reduce((s, a) => s + a.per_day, 0);
-    const sh = (xs: Alert[]) => xs.map((a) => shiftAlert(a, offset));
-    return { open: sh(open), closed: sh(closed), digest: sh(digest), stake };
-  }, [alerts, site, now, offset]);
+    return { open, closed, digest, stake };
+  }, [alerts, site, now]);
 
   const tomorrow = iso(new Date(parse(shown).getTime() + 864e5)).slice(0, 10);
   const liveDay = useLiveDay(live ? tomorrow : null);
   const tmaxT = wx?.daily.GGN[tomorrow]?.tmax;
   const fc = live ? (liveDay && tmaxT != null ? pickCell(liveDay, tmaxT, 0).f : liveDay ? pickCell(liveDay, liveDay.template_tmax, 0).f : undefined) : days?.[tomorrow];
-  const faultNow = faults?.filter((f) => f.start <= now && f.end > now && (site === "ALL" || f.site === site)) ?? [];
+  const faultNow = feeds ? SITES.filter((s) => site === "ALL" || s === site).flatMap((s) => feeds.feeds[s].faults_now) : [];
   const where = site === "ALL" ? "across the three hotels" : `at ${SITE_NAME[site]}`;
 
   return (
@@ -141,18 +130,18 @@ export default function Shift() {
             {!v ? "Checking the hotels…" : v.open.length === 0 ? `Nothing needs attention ${where} right now.` :
               <>{v.open.length} {v.open.length === 1 ? "issue is" : "issues are"} wasting about <strong>{inr(v.stake)} a day</strong> {where}. Most costly first.</>}
           </p>
-          {live && <span className="feed-note">Meter readings: sample feed, replayed from {fmtD(now)}</span>}
+          {live && feeds && <span className="feed-note">Live feed (simulated meters) · updated {feeds.updated.slice(11, 16)}</span>}
         </div>
       </div>
 
       <div className="hotels">
-        {SITES.map((s) => <HotelCard key={s} s={s} now={now} temp={live ? wx?.now[s] : undefined} open={per[s].open.length} atStake={per[s].stake} pressed={site === s} onClick={() => setSite(site === s ? "ALL" : s)} />)}
+        {SITES.map((s) => <HotelCard key={s} s={s} feed={feeds?.feeds[s]} temp={live ? wx?.now[s] : undefined} open={per[s].open.length} atStake={per[s].stake} pressed={site === s} onClick={() => setSite(site === s ? "ALL" : s)} />)}
       </div>
 
       {faultNow.map((f) => (
         <div key={f.start + f.kind} className="guard note-warn" style={{ marginBottom: 12 }}>
           <span aria-hidden>⚠</span>
-          <span><strong>{f.hotel}: the main meter is sending bad readings since {fmtDT(addMs(f.start, offset))}.</strong> We are ignoring those hours, so no false waste alerts will appear. The bill for this month will need checking.</span>
+          <span><strong>{f.hotel}: the main meter is sending bad readings since {fmtDT(f.start)}.</strong> We are ignoring those hours, so no false waste alerts will appear. The bill for this month will need checking.</span>
         </div>
       ))}
 

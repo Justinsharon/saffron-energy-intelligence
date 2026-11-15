@@ -19,6 +19,7 @@ function Rich({ text }: { text: string }) {
 
 interface Msg { role: "user" | "assistant"; content: string; via?: string }
 const PROMPTS = [
+  "How are the hotels doing right now?",
   "Why was Gurugram's May 2026 bill higher than April's?",
   "We have a 300-guest conference at Gurugram tomorrow. Will we go over the power limit?",
   "What if it's 40 °C with a 300-guest conference?",

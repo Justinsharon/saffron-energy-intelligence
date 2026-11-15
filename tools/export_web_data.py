@@ -2,8 +2,14 @@
 
 Every number comes from the existing modules (detector cards, bills, attribution, forecast, savings, evaluation); this script only
 serialises them. Run after src/build_app_data.py:   uv run python tools/export_web_data.py
+
+--live: export the synthetic live year (data/live/, built by tools/run_live_year.py) to web/public/data/live_feed/ and a copy for the
+Netlify functions (feed, assistant). Same file shapes; alert ids get an "LV-" prefix; bills carry bill_issued so the app shows only bills
+issued so far; bill-change pairs use the baseline fitted on the original year (no refit on live data). The front end and the feed
+function show these rows only up to the current hour in India.
 """
 import json
+import os
 import math
 import re
 import subprocess
@@ -15,12 +21,16 @@ import numpy as np
 import pandas as pd
 
 ROOT = Path(__file__).resolve().parents[1]
+LIVE = "--live" in sys.argv
+if LIVE:
+    os.environ["SAFFRON_DATA"] = str(ROOT / "data" / "live")      # before any src import: modules bind their data folder at import
 sys.path.insert(0, str(ROOT / "src"))
 from alert_cards import CHART  # noqa: E402
 from features import APP, CLEAN, SITES  # noqa: E402
 
-OUT = ROOT / "web" / "public" / "data"
-FN_OUT = ROOT / "web" / "netlify" / "functions" / "data"     # copy the assistant tools read
+OUT = ROOT / "web" / "public" / "data" / ("live_feed" if LIVE else "")
+FN_OUT = ROOT / "web" / "netlify" / "functions" / "data" / ("live_feed" if LIVE else "")     # copy the functions read
+PREFIX = "LV-" if LIVE else ""                                   # live alert ids must not collide with the original year's
 SITE_LIST = ["GGN", "JAI", "GOA"]
 
 
@@ -43,7 +53,7 @@ def clean(o):
     return o
 
 
-def write(name, obj, also_fn=False):
+def write(name, obj=None, also_fn=False):
     txt = json.dumps(clean(obj), separators=(",", ":"), ensure_ascii=False)
     (OUT / name).write_text(txt, encoding="utf-8")
     if also_fn:
@@ -68,10 +78,11 @@ def export_hotels(F):
                       daily=[dict(date=i.strftime("%Y-%m-%d"), **r) for i, r in day.iterrows()])
         hourly = d[["timestamp", "total_kwh", "pred_ens", "temp_c", "kva_max_in_hour", "event_on", "fault"]].rename(
             columns={"timestamp": "t", "total_kwh": "a", "pred_ens": "b", "temp_c": "temp", "kva_max_in_hour": "kva", "event_on": "ev", "fault": "f"})
-        write(f"hourly_{s}.json", dict(t=list(hourly.t.dt.strftime("%Y-%m-%dT%H")), a=list(hourly.a.round(1)), b=list(hourly.b.round(1)),
+        write(f"hourly_{s}.json", also_fn=LIVE, obj=dict(t=list(hourly.t.dt.strftime("%Y-%m-%dT%H")), a=list(hourly.a.round(1)), b=list(hourly.b.round(1)),
                                        temp=list(hourly.temp.round(1)), kva=list(hourly.kva.round(0)), ev=list(hourly.ev.astype(int)),
                                        f=list(hourly.f.astype(int))))
-    write("hotels.json", out)
+    if not LIVE:                                                 # rooms / contract come from the original file
+        write("hotels.json", out)
 
 
 def export_alerts(F):
@@ -85,15 +96,15 @@ def export_alerts(F):
         cols = [x for x in CHART.get(r.rule, []) if x in w]
         ev = dict(t=list(w.timestamp.dt.strftime("%Y-%m-%dT%H")), actual=list(w.total_kwh.round(1)), baseline=list(w.pred_ens.round(1)),
                   signals={x: list(pd.to_numeric(w[x], errors="coerce").round(3)) for x in cols})
-        rows.append(dict(id=r.alert_id, site=r.site, hotel=r.hotel, rule=r.rule, title=r.title, severity=r.severity, equipment=r.equipment,
+        rows.append(dict(id=PREFIX + r.alert_id, site=r.site, hotel=r.hotel, rule=r.rule, title=r.title, severity=r.severity, equipment=r.equipment,
                          start=r.start, end=r.end, alert_time=r.alert_time, flagged_h=r.flagged_h, duration_h=r.duration_h,
                          detect_lag_h=r.detect_lag_h, excess_kwh=r.excess_kwh, cost=r.cost_inr, per_hour=r.inr_per_hour, per_day=r.inr_per_day,
                          cost_basis=r.cost_basis, cost_note=r.cost_note, channel=r.channel, repeat_30d=r.repeat_30d, inferred_note=r.inferred_note,
                          evidence=r.evidence, cause=r.cause, action=r.action, guardrail=r.guardrail, guard_text=r.guard_text, post_hoc=bool(r.post_hoc),
                          text=r.text, chart=ev))
-    write("alerts.json", rows)
+    write("alerts.json", rows, also_fn=LIVE)
     f = pd.read_parquet(APP / "faults.parquet")
-    write("faults.json", f.to_dict("records"))
+    write("faults.json", f.to_dict("records"), also_fn=LIVE)
     # compact list for the assistant (no chart arrays)
     lite = [{k: v for k, v in x.items() if k not in ("chart", "text")} for x in rows]
     (FN_OUT / "alerts_lite.json").write_text(json.dumps(clean(lite), separators=(",", ":"), ensure_ascii=False), encoding="utf-8")
@@ -103,6 +114,9 @@ def export_bills():
     from attribution import explain_change
     from bills import components, unused_demand
     r = pd.read_parquet(APP / "bills_recon.parquet")
+    if LIVE:
+        b = pd.read_parquet(CLEAN / "monthly_bills.parquet")[["site", "billing_month", "bill_issued"]]
+        r = r.merge(b.rename(columns={"billing_month": "month"}), on=["site", "month"], how="left")
     comp = {s: components(s).to_dict("records") for s in SITE_LIST}
     unused = {s: unused_demand(s) for s in SITE_LIST}
     write("bills.json", dict(recon=r.to_dict("records"), components=comp, unused_demand=unused), also_fn=True)
@@ -159,7 +173,8 @@ def export_quality():
     f = pd.read_parquet(CLEAN / "meter_faults.parquet")
     frozen = score_heldout(pd.read_parquet(CLEAN / "alerts.parquet"), f)["summary"]
     full = score_heldout(pd.read_parquet(APP / "cards.parquet"), f)["summary"]
-    out = subprocess.run([sys.executable, str(ROOT / "tools" / "acceptance.py")], capture_output=True, text=True, cwd=ROOT).stdout
+    env = {k: v for k, v in os.environ.items() if k != "SAFFRON_DATA"} | {"PYTHONIOENCODING": "utf-8"}     # utf-8 both ways (Windows)
+    out = subprocess.run([sys.executable, str(ROOT / "tools" / "acceptance.py")], capture_output=True, encoding="utf-8", cwd=ROOT, env=env).stdout
     tests = [dict(id=m.group(1), result=m.group(2), detail=m.group(3).strip())
              for m in re.finditer(r"^(T\d+)\s+(PASS|CHECK)\s+(.*)$", out, flags=re.M)]
     alarms = pd.read_parquet(CLEAN / "bms_alarm_log.parquet")
@@ -174,10 +189,35 @@ def export_rating():
     write("rating_set.json", RATING_IDS)
 
 
+def freeze_attribution():
+    """Live mode: bill-change attribution must use the baseline fitted on the original year, as tools/run_live_year.py does."""
+    import attribution
+    import baseline
+    import features
+    from baseline import GBM_FEATURES, build_features, make_gbm, make_ridge
+    live = features.CLEAN
+    for m in (features, baseline):
+        m.CLEAN = features.DEFAULT_CLEAN
+    try:
+        train = {s: build_features(s) for s in SITE_LIST}
+    finally:
+        for m in (features, baseline):
+            m.CLEAN = live
+    for s, d in train.items():
+        tr = d[d.valid]
+        attribution._MODELS[s] = (make_ridge().fit(tr, tr.total_kwh), make_gbm().fit(tr[GBM_FEATURES], tr.total_kwh))
+
+
 if __name__ == "__main__":
     OUT.mkdir(parents=True, exist_ok=True)
     FN_OUT.mkdir(parents=True, exist_ok=True)
     F = frames()
+    if LIVE:
+        export_hotels(F)
+        export_alerts(F)
+        freeze_attribution()
+        export_bills()
+        sys.exit(0)
     export_hotels(F)
     export_alerts(F)
     export_savings()

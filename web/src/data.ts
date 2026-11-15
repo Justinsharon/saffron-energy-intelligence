@@ -1,5 +1,6 @@
 // Static data exported by tools/export_web_data.py. Every number shown in the UI comes from these files.
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { visibleAlerts, visibleBills, visibleChanges, visibleFaults } from "./feedcore";
 
 export type Site = "GGN" | "JAI" | "GOA";
 export const SITES: Site[] = ["GGN", "JAI", "GOA"];
@@ -11,6 +12,7 @@ export interface Alert {
   excess_kwh: number; cost: number; per_hour: number; per_day: number; cost_basis: "per_day" | "per_occurrence"; cost_note: string;
   channel: "Alert" | "Daily digest"; repeat_30d: number; inferred_note: string; evidence: string; cause: string; action: string;
   guardrail: string; guard_text: string; post_hoc: boolean; text: string;
+  ongoing?: boolean;            // still running at the moment shown: figures cut to the readings so far (feedcore.clipAlert)
   chart: { t: string[]; actual: number[]; baseline: number[]; signals: Record<string, (number | null)[]> };
 }
 export interface Fault { site: Site; hotel: string; start: string; end: string; kind: string; detected_at: string; evidence: string; duration_h: number; handling: string }
@@ -22,7 +24,7 @@ export interface Hourly { t: string[]; a: number[]; b: number[]; temp: number[];
 export interface Recon {
   site: Site; month: string; status: string; note: string; billed_total: number; tariff_check_total: number; tariff_check_max_gap: number;
   meter_kvah: number; billed_kvah: number; meter_gap_pct: number; corrected_total: number; billed_minus_corrected: number; md_kva: number;
-  billing_demand_kva: number; pf: number; pf_source: string; [k: string]: number | string;
+  billing_demand_kva: number; pf: number; pf_source: string; bill_issued?: string; [k: string]: number | string | undefined;
 }
 export interface Bills { recon: Recon[]; components: Record<Site, { billing_month: string; component: string; inr: number }[]>; unused_demand: Record<Site, { cd: number; floor: number; max_md: number; months_on_floor: number; paid_for_unused_inr: number }> }
 export interface BillChange {
@@ -54,4 +56,42 @@ export function useData<T>(name: string | null): T | null {
   const [v, setV] = useState<T | null>(null);
   useEffect(() => { let live = true; setV(null); if (name) load<T>(name).then((x) => live && setV(x)); return () => { live = false; }; }, [name]);
   return v;
+}
+
+/** Original year plus the live (simulated) year, as [original, live]; live is null if its files are missing. */
+function useBoth<T>(name: string): [T | null, T | null, boolean] {
+  const [v, setV] = useState<[T | null, T | null, boolean]>([null, null, false]);
+  useEffect(() => {
+    let on = true;
+    Promise.all([load<T>(name), load<T>(`live_feed/${name}`).catch(() => null)]).then(([a, b]) => on && setV([a, b, true]));
+    return () => { on = false; };
+  }, [name]);
+  return v;
+}
+/** Every alert raised by `now` (both years); alerts still running are cut to the readings so far. */
+export function useAlertsAt(now: string): Alert[] | null {
+  const [o, l, ok] = useBoth<Alert[]>("alerts.json");
+  return useMemo(() => (ok && o ? visibleAlerts([...o, ...(l ?? [])], now) : null), [o, l, ok, now]);
+}
+export function useFaultsAt(now: string): Fault[] | null {
+  const [o, l, ok] = useBoth<Fault[]>("faults.json");
+  return useMemo(() => (ok && o ? visibleFaults([...o, ...(l ?? [])], now) : null), [o, l, ok, now]);
+}
+/** Bills issued by `now`: the original year plus live-year bills whose issue date has passed. */
+export function useBillsAt(now: string): Bills | null {
+  const [o, l, ok] = useBoth<Bills>("bills.json");
+  return useMemo(() => (ok && o ? visibleBills(o, l, now) : null), [o, l, ok, now.slice(0, 10)]);
+}
+export function useChangesAt(bills: Bills | null): Record<string, BillChange> | null {
+  const [o, l, ok] = useBoth<Record<string, BillChange>>("bill_changes.json");
+  return useMemo(() => (ok && o && bills ? visibleChanges(o, l, bills) : null), [o, l, ok, bills]);
+}
+/** Hourly readings for one hotel across both years (clip with feedcore.clipHourly before showing). */
+export function useHourlyAll(site: Site): Hourly | null {
+  const [o, l, ok] = useBoth<Hourly>(`hourly_${site}.json`);
+  return useMemo(() => {
+    if (!ok || !o) return null;
+    if (!l) return o;
+    return { t: [...o.t, ...l.t], a: [...o.a, ...l.a], b: [...o.b, ...l.b], temp: [...o.temp, ...l.temp], kva: [...o.kva, ...l.kva], ev: [...o.ev, ...l.ev], f: [...o.f, ...l.f] };
+  }, [o, l, ok]);
 }

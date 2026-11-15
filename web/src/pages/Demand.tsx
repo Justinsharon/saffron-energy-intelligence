@@ -3,6 +3,7 @@ import { useClock } from "../App";
 import { KVA } from "../components/parts";
 import { useData, type ForecastDay } from "../data";
 import { pickCell, useLiveDay, useLiveIndex, useWeather } from "../live";
+import { useFeeds } from "../feed";
 import { addMs, DAY_MS, fmtD, iso, n, parse } from "../format";
 import { LOAD } from "../copy";
 
@@ -116,6 +117,8 @@ export default function Demand() {
   const days = useData<Record<string, ForecastDay>>("forecast_days.json");
   const idx = useLiveIndex();
   const wx = useWeather();
+  const feeds = useFeeds(now, live);
+  const g = feeds?.feeds.GGN.today;
   const [mode, setMode] = useState<"day" | "whatif">("day");
   const [pick, setPick] = useState<string | null>(null);
   const [temp, setTemp] = useState<number | null>(null);
@@ -142,6 +145,12 @@ export default function Demand() {
         )}
       </div>
 
+      {live && g && g.peak_kva != null && (
+        <div className="panel flat" style={{ marginBottom: 14, display: "flex", gap: 24, alignItems: "baseline", flexWrap: "wrap" }}>
+          <div className="stat"><span>Today so far, actual peak</span><b>{n(g.peak_kva)} kVA</b><em>at {String(g.peak_hour).padStart(2, "0")}:00, {Math.round(g.peak_kva / 10)}% of the 1,000 kVA limit</em></div>
+          <span className="small muted">From the live feed (simulated meters), {g.hours} hours of today up to {feeds!.updated.slice(11, 16)}. The forecast below is for tomorrow.</span>
+        </div>
+      )}
       {live && mode === "day" && <LiveDay day={tomorrow} guests={0} tempOverride={null} showControls={false} setGuests={() => {}} setTemp={() => {}} />}
 
       {live && mode === "whatif" && (

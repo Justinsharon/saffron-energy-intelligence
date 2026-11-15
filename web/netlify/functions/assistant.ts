@@ -3,15 +3,44 @@
 // 2. Claude answers only through tools that return numbers our models exported (data/*.json).
 // 3. Every number in the reply must appear in the tool results or the question; otherwise one rewrite, then a template answer.
 // 4. Without ANTHROPIC_API_KEY the same tools are routed by keywords.
+// 5. Live: the live feed (Oct 2026 - Sep 2027, simulated meters) is cut at the current IST hour with the feed's own code (src/feedcore.ts);
+//    alerts not yet raised and bills not yet issued are invisible to every tool.
 import Anthropic from "@anthropic-ai/sdk";
-import alerts from "./data/alerts_lite.json";
-import bills from "./data/bills.json";
-import changes from "./data/bill_changes.json";
+import origAlerts from "./data/alerts_lite.json";
+import origBills from "./data/bills.json";
+import origChanges from "./data/bill_changes.json";
+import liveAlertsFull from "./data/live_feed/alerts.json";
+import liveAlerts from "./data/live_feed/alerts_lite.json";
+import liveFaults from "./data/live_feed/faults.json";
+import liveBills from "./data/live_feed/bills.json";
+import liveChanges from "./data/live_feed/bill_changes.json";
+import hGGN from "./data/live_feed/hourly_GGN.json";
+import hJAI from "./data/live_feed/hourly_JAI.json";
+import hGOA from "./data/live_feed/hourly_GOA.json";
+import { feedFor, istNow as istNowFull, issued } from "../../src/feedcore";
 import days from "./data/forecast_days.json";
 import whatif from "./data/forecast_whatif.json";
 import savings from "./data/savings.json";
 
 type J = Record<string, any>;
+const HOURLY: J = { GGN: hGGN, JAI: hJAI, GOA: hGOA };
+const RECON: J[] = [...(origBills as J).recon, ...(liveBills as J).recon];
+// What the tools may see at this moment: bills issued and alerts raised by now; a running alert is cut to the hours so far.
+const billsNow = () => RECON.filter((r) => issued(r, istNowFull()));
+const changesNow = (): J => {
+  const ok = new Set(billsNow().map((r) => `${r.site}|${r.month}`)); const out: J = { ...(origChanges as J) };
+  for (const [k, v] of Object.entries(liveChanges as J)) if (ok.has(`${v.site}|${v.a}`) && ok.has(`${v.site}|${v.b}`)) out[k] = v;
+  return out;
+};
+const alertsNow = (): J[] => {
+  const now = istNowFull();
+  return [...(origAlerts as J[]), ...(liveAlerts as J[])].filter((a) => a.alert_time <= now).map((a) => {
+    if (a.end <= now) return a;
+    const ran = Math.max(0, (Date.parse(now + ":00Z") - Date.parse(a.start + ":00Z")) / 3.6e6);
+    return { ...a, end: now, duration_h: ran, cost: a.cost_basis === "per_day" ? a.per_hour * Math.min(a.flagged_h, ran) : 0,
+             evidence: "still running; today_status has the readings so far", ongoing: true };
+  });
+};
 const MODEL = process.env.PS12_MODEL || "claude-sonnet-5-5";
 const SITES: Record<string, string> = { GGN: "Gurugram", JAI: "Jaipur", GOA: "Goa" };
 
@@ -100,13 +129,39 @@ const TOOLS: Record<string, { fn: (a: J) => J | Promise<J>; desc: string; params
         conference_guests: g, note: g !== gIn ? "guest count rounded to the nearest 100" : undefined, ...riskOut({ risk: c.risk, plan: c.plan }) };
     },
   },
+  today_status: {
+    desc: "Right now at one or all hotels, from the live feed (simulated meters) up to the current hour in India: energy used today vs expected, today's peak power demand, problems running now with their cost per day and action, meter faults, and the latest bill received.",
+    params: { site: "string: GGN/JAI/GOA or hotel name, optional (default all three)" },
+    fn: (a) => {
+      const now = istNowFull();
+      const sites = a.site ? [site(a.site)] : Object.keys(SITES);
+      return { as_of_india_time: now.replace("T", " "), source: "live feed from simulated meters (readings up to the current hour only)",
+        hotels: sites.map((s) => {
+          const f = feedFor(s as any, now, 24, { hourly: HOURLY[s], alerts: liveAlertsFull as any, faults: liveFaults as any, recon: RECON as any });
+          const t = f.today;
+          const last = f.readings.t.length - 1;
+          return { hotel: SITES[s], latest_reading_hour: last >= 0 ? f.readings.t[last].replace("T", " ") + ":00" : null,
+            latest_hour_kw: last >= 0 ? r0(f.readings.a[last]) : null, latest_hour_expected_kw: last >= 0 ? r0(f.readings.b[last]) : null,
+            used_today_kwh: r0(t.used_kwh), expected_today_kwh: r0(t.expected_kwh),
+            today_vs_expected_pct: t.expected_kwh > 0 ? Math.round((t.used_kwh / t.expected_kwh - 1) * 1000) / 10 : null,
+            peak_power_demand_today_kva: t.peak_kva == null ? null : r0(t.peak_kva), peak_hour: t.peak_hour,
+            contracted_power_limit_kva: s === "GGN" ? 1000 : s === "JAI" ? 700 : 600,
+            problems_now: f.open_alerts.filter((x) => x.channel === "Alert").map((x) => ({ problem: WASTE[x.rule] ?? x.title, since: x.start.replace("T", " "),
+              hours_so_far: Math.round(x.duration_h), inr_per_day: x.cost_basis === "per_day" ? r0(x.per_day) : null,
+              inr_so_far: x.cost_basis === "per_day" ? r0(x.cost) : null, action: x.action })),
+            meter_faults_now: f.faults_now.map((x) => ({ since: x.start.replace("T", " "), what: x.kind })),
+            latest_bill: f.latest_bill ? { month: f.latest_bill.month, total_inr: r0(f.latest_bill.billed_total), check: f.latest_bill.status,
+                                           issued: f.latest_bill.bill_issued ?? "on file" } : null };
+        }) };
+    },
+  },
   explain_bill_change: {
     desc: "Split the change between two monthly bills of one hotel into weather, occupancy, events, calendar, anomalies (incl. PF), demand, diesel, tariff mix. Months as YYYY-MM.",
     params: { site: "string: GGN/JAI/GOA or hotel name", month_a: "string YYYY-MM", month_b: "string YYYY-MM" },
     fn: (a) => {
       const s = site(a.site); const [x, y] = [a.month_a, a.month_b].sort();
-      const c = (changes as J)[`${s}|${x}|${y}`];
-      if (!c) return { error: "No bill for one of those months (data covers Oct 2025 – Sep 2026)." };
+      const c = changesNow()[`${s}|${x}|${y}`];
+      if (!c) return { error: "No comparison for those months: either a bill has not been issued yet, or the months are in different data years (Oct 2025 – Sep 2026, and the live feed from Oct 2026)." };
       return { hotel: SITES[s], month_a: x, month_b: y, bill_a_inr: r0(c.bill_a), bill_b_inr: r0(c.bill_b), change_inr: r0(c.delta),
         change_by_driver_inr: Object.fromEntries(Object.entries(c.groups).map(([k, v]) => [PLAIN_DRIVER[k] ?? k, v])), detail_inr: Object.fromEntries(c.lines.map((l: J) => [l.driver, r0(l.inr)])),
         context: { hottest_hour_c_before: c.context.tmax_A, hottest_hour_c_after: c.context.tmax_B, cooling_need_ratio: Math.round(c.context.cdh_B / Math.max(c.context.cdh_A, 1) * 10) / 10,
@@ -120,21 +175,21 @@ const TOOLS: Record<string, { fn: (a: J) => J | Promise<J>; desc: string; params
     params: { site: "string", month: "string YYYY-MM, optional" },
     fn: (a) => {
       const s = site(a.site);
-      const rows = (bills as J).recon.filter((r: J) => r.site === s && (!a.month || r.month === a.month))
+      const rows = billsNow().filter((r: J) => r.site === s && (!a.month || r.month === a.month))
         .map((r: J) => ({ month: r.month, status: r.status, billed_total: r0(r.billed_total), corrected_total: r0(r.corrected_total), billed_minus_corrected: r0(r.billed_minus_corrected), md_kva: r.md_kva, pf: r.pf, pf_source: r.pf_source, note: r.note }));
-      return { hotel: SITES[s], rows };
+      return rows.length ? { hotel: SITES[s], rows } : { hotel: SITES[s], rows, error: `No bill for ${a.month ?? "that month"} has been issued yet.` };
     },
   },
   list_alerts: {
     desc: "Detected waste alerts with evidence, ₹ and action, largest ₹ first.",
     params: { site: "string, optional", date_from: "YYYY-MM-DD optional", date_to: "YYYY-MM-DD optional", top: "integer, optional" },
     fn: (a) => {
-      let x = (alerts as J[]);
+      let x = alertsNow();
       if (a.site) x = x.filter((q) => q.site === site(a.site));
       if (a.date_from) x = x.filter((q) => q.end >= a.date_from);
       if (a.date_to) x = x.filter((q) => q.start <= a.date_to + "T23:59");
       x = [...x].sort((p, q) => q.cost - p.cost).slice(0, Number(a.top) || 8);
-      return { n: x.length, alerts: x.map((q) => ({ id: q.id, hotel: q.hotel, title: q.title, severity: q.severity, start: q.start, hours: Math.round(q.duration_h * 10) / 10,
+      return { n: x.length, alerts: x.map((q) => ({ id: q.id, hotel: q.hotel, title: q.title, severity: q.severity, start: q.start, still_running: !!q.ongoing, hours: Math.round(q.duration_h * 10) / 10,
         inr: r0(q.cost), inr_per_day: q.cost_basis === "per_day" ? r0(q.per_day) : null, problem: WASTE[q.rule] ?? q.title, meter_readings: q.evidence, action: q.action })) };
     },
   },
@@ -186,8 +241,9 @@ post-hoc, held-out, Shapley, kVAh, MD, CD, ToD, PF, APFC, CHW, AHU, BMS, TR or k
 "evening peak hours", "capacitor panel", "chilled water", "air handlers", "building control system"). Name drivers as the tools do. Never print tool field names, codes or capitalised labels such as BREACH RISK; say "risk of going over the power limit".
 Don't mention the power factor by name; say "the capacitor panel fault made the utility bill for more electricity than was used". Use "chilled water set too cold", not "setpoint".
 You only recommend; a person approves every action. Never suggest automatic control of kitchen exhaust, guest-room thermostats, lifts or life-safety,
-and never a chilled-water setpoint below 6.5 °C. Questions about tomorrow or a coming date use forecast_upcoming (real weather forecast). forecast_scenario is a what-if for a hot weekday in May; forecast_day is for past dates.`;
-const system = () => `${SYSTEM}\nToday is ${istToday()} (India). Meter data and bills run from Oct 2025 to Sep 2026; bills from Oct 2026 have not been received yet, so say so if asked about them.`;
+and never a chilled-water setpoint below 6.5 °C. Questions about tomorrow or a coming date use forecast_upcoming (real weather forecast). forecast_scenario is a what-if for a hot weekday in May; forecast_day is for past dates.
+Questions about right now, today, the latest readings or what is wrong at the moment use today_status (live feed, simulated meters, up to the current hour).`;
+const system = () => `${SYSTEM}\nNow is ${istNowFull().replace("T", " ")} (India). Meter data: Oct 2025 – Sep 2026 is the original sample year; from 1 Oct 2026 it is a live feed from simulated meters, available up to the current hour only. Bills are available once issued (5th of the following month); say so if asked about a later one.`;
 
 // ---------- 3. number check ----------
 function numbers(t: string): number[] {
@@ -210,7 +266,13 @@ function route(q: string): [string, J][] {
   const ql = q.toLowerCase();
   const s = Object.entries(SITES).find(([c, n]) => ql.includes(n.toLowerCase()) || new RegExp(`\\b${c.toLowerCase()}\\b`).test(ql))?.[0] ?? "GGN";
   const M = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"];
-  const ym = [...ql.matchAll(/\b(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\b/g)].map((m) => { const k = M.indexOf(m[1]) + 1; return `${k >= 10 ? 2025 : 2026}-${String(k).padStart(2, "0")}`; });
+  // a month without a year means its latest issued occurrence (e.g. "October" = Oct 2026 once that bill is in, else Oct 2025)
+  const have = new Set(billsNow().map((r) => r.month));
+  const ym = [...ql.matchAll(/\b(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\b(?:\s+(20\d\d))?/g)].map((m) => {
+    const k = String(M.indexOf(m[1]) + 1).padStart(2, "0");
+    if (m[2]) return `${m[2]}-${k}`;
+    return [2027, 2026, 2025].map((y) => `${y}-${k}`).find((x) => have.has(x)) ?? `${Number(k) >= 10 ? 2025 : 2026}-${k}`;
+  });
   const tm = ql.match(/(\d{2}(?:\.\d)?)\s*°?\s*c\b/);
   if (tm && (ql.includes("tomorrow") || ql.includes("what if"))) {
     const g = ql.match(/(\d{2,4})\s*(?:-|\s)?(?:guest|people|pax|delegate)/);
@@ -222,6 +284,8 @@ function route(q: string): [string, J][] {
     return [["explain_bill_change", { site: s, month_a: a, month_b: b }]];
   }
   if (/bill|reconcil|provisional/.test(ql)) return [["bill_reconciliation", { site: s, month: ym[0] }]];
+  const named = Object.entries(SITES).some(([c, n]) => ql.includes(n.toLowerCase()) || new RegExp(`\\b${c.toLowerCase()}\\b`).test(ql));
+  if (/right now|\bnow\b|today|latest|currently|at the moment|so far|how is|how are|status/.test(ql)) return [["today_status", named ? { site: s } : {}]];
   if (/tomorrow|next week|upcoming/.test(ql)) { const g = ql.match(/(\d{2,4})\s*(?:-|\s)?(?:guest|people|pax|delegate)/); return [["forecast_upcoming", { conference_guests: g ? Number(g[1]) : 0 }]]; }
   if (/forecast|risk|peak|kva/.test(ql)) { const d = q.match(/20\d\d-\d\d-\d\d/); return [[d && d[0] > "2026-09-30" ? "forecast_upcoming" : "forecast_day", { date: d ? d[0] : "2026-06-18" }]]; }
   if (/saving|save/.test(ql)) return [["savings_plan", {}]];
@@ -240,6 +304,17 @@ function template(calls: [string, J, J][]): string {
       : x.status === "Meter fault" ? `${r.hotel}, ${x.month}: billed ${f(x.billed_total)} using faulty meter readings; on our corrected reading it would be ${f(x.corrected_total)}.`
       : `${r.hotel}, ${x.month}: billed ${f(x.billed_total)}, which matches our meter.`);
     else if (n === "forecast_day" || n === "forecast_scenario" || n === "forecast_upcoming") { p.push(`${r.scenario ?? r.date}${r.top_temperature_c != null ? ` (top ${r.top_temperature_c} °C)` : ""}: expected peak ${r.forecast_peak_kva} kVA around ${r.peak_hour}:00 (limit 1,000 kVA); ${r.chance_above_1000_kva_pct}% chance of going over. If laundry, water heating and banquet cooling overlap that afternoon it could reach ${r.if_laundry_water_heating_and_banquet_cooling_overlap_kva} kVA.${r.shift_plan ? " Suggested moves:" : ""}`); for (const s of r.shift_plan ?? []) p.push(`- ${s.action} (frees about ${s.frees_up_kva} kVA)`); }
+    else if (n === "today_status") {
+      p.push(`As of ${r.as_of_india_time} (India), from the live feed (simulated meters):`);
+      for (const h of r.hotels) {
+        p.push(`- ${h.hotel}: ${h.used_today_kwh.toLocaleString("en-IN")} kWh used today vs ${h.expected_today_kwh.toLocaleString("en-IN")} expected` +
+          `${h.today_vs_expected_pct != null ? ` (${h.today_vs_expected_pct >= 0 ? "+" : ""}${h.today_vs_expected_pct}%)` : ""}; ` +
+          `peak so far ${h.peak_power_demand_today_kva ?? "—"} kVA (limit ${h.contracted_power_limit_kva.toLocaleString("en-IN")}).` +
+          (h.problems_now.length ? ` Running now: ${h.problems_now.map((x: J) => `${x.problem} since ${x.since}${x.inr_per_day != null ? `, about ${f(x.inr_per_day)} a day` : ""}`).join("; ")}.` : " Nothing needs attention.") +
+          (h.meter_faults_now.length ? " The main meter is sending bad readings; those hours are ignored." : "") +
+          (h.latest_bill ? ` Latest bill: ${h.latest_bill.month}, ${f(h.latest_bill.total_inr)}.` : ""));
+      }
+    }
     else if (n === "savings_plan") { p.push(`We can save about ${f(r.total_inr)} a year, ${r.pct_of_group_bill}% of the electricity bill (${r.with_capital_note_pct}% with investments). The biggest items:`); for (const m of [...r.measures].sort((a: J, b: J) => b.inr - a.inr).slice(0, 6)) p.push(`- ${m.hotel}: ${m.measure}: ${f(m.inr)} a year`); }
   }
   return p.join("\n");

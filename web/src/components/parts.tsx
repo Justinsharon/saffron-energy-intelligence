@@ -120,10 +120,12 @@ export function Ticket({ a, now, onAck, acked, defaultOpen = false }: { a: Alert
   const [warn, setWarn] = useState("");
   useEffect(() => setOpen(defaultOpen), [a.id, defaultOpen]);
   const c = RULE[a.rule] ?? { title: a.title, why: a.cause, todo: a.action };
-  const live = now && now < a.end && now >= a.start;
-  const ranH = live ? (parse(now!).getTime() - parse(a.start).getTime()) / 3.6e6 : a.duration_h;
-  const costSoFar = a.cost_basis === "per_day" ? a.per_hour * Math.min(ranH, a.flagged_h) : a.cost;
-  const money = a.cost <= 0 ? <><b>Small</b><span>cost not significant</span></>
+  // a.ongoing: already cut to the readings up to the hour shown (feedcore.clipAlert), so its figures are "so far"
+  const live = a.ongoing || (now && now < a.end && now >= a.start);
+  const ranH = a.ongoing ? a.duration_h : live ? (parse(now!).getTime() - parse(a.start).getTime()) / 3.6e6 : a.duration_h;
+  const costSoFar = a.ongoing ? a.cost : a.cost_basis === "per_day" ? a.per_hour * Math.min(ranH, a.flagged_h) : a.cost;
+  const money = a.ongoing && a.cost_basis !== "per_day" ? <><b>Running</b><span>₹ worked out when it ends</span></>
+    : a.cost <= 0 ? <><b>Small</b><span>cost not significant</span></>
     : a.cost_basis === "per_day" ? <><b>{inr(a.per_day)}</b><span>a day while it continues</span></>
     : <><b>{inr(a.cost)}</b><span>this time</span></>;
   function respond(kind: string) {
@@ -153,11 +155,11 @@ export function Ticket({ a, now, onAck, acked, defaultOpen = false }: { a: Alert
       {open && (
         <div className="more">
           <dl className="facts">
-            <dt>Cost so far</dt><dd>{a.cost > 0 ? (a.cost_basis === "per_day" ? <>{inr(live ? costSoFar : a.cost)} ({inr(a.per_hour)} an hour)</> : inr(a.cost)) : "Not significant"}</dd>
+            <dt>Cost so far</dt><dd>{a.ongoing && a.cost_basis !== "per_day" ? "Worked out when it ends" : a.cost > 0 ? (a.cost_basis === "per_day" ? <>{inr(live ? costSoFar : a.cost)} ({inr(a.per_hour)} an hour)</> : inr(a.cost)) : "Not significant"}</dd>
             <dt>Spotted</dt><dd>{fmtDT(a.alert_time)}, about {n(Math.max(1, a.detect_lag_h))} hour{Math.round(a.detect_lag_h) > 1 ? "s" : ""} after it started</dd>
             <dt>Equipment</dt><dd>{EQUIPMENT[a.equipment] ?? a.equipment}</dd>
           </dl>
-          <Evidence a={a} upto={live ? now : undefined} />
+          <Evidence a={a} upto={live ? (now ?? a.end) : undefined} />
           <details className="more-info"><summary>Meter readings for the engineer</summary><p className="tech">{a.evidence}.{a.inferred_note ? ` ${a.inferred_note}` : ""}</p></details>
           <div className="guard"><span aria-hidden>🛡</span><span>{SAFETY[a.guardrail] ?? a.guard_text}</span></div>
           {onAck && (

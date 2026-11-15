@@ -1,26 +1,32 @@
 import { useMemo, useState } from "react";
 import { useClock } from "../App";
 import { Ticket } from "../components/parts";
-import { SITE_NAME, useData, type Alert, type Fault, type Quality, type Site } from "../data";
-import { DATA_LAST, fmtD, fmtDT, inr, n, parse, pct } from "../format";
+import { SITE_NAME, useAlertsAt, useData, useFaultsAt, type Alert, type Quality, type Site } from "../data";
+import { fmtD, fmtDT, inr, LIVE_START, n, parse } from "../format";
 import { SiteSwitch } from "./Shift";
 import { RULE } from "../copy";
 const T = (a: Alert) => RULE[a.rule]?.title ?? a.title;
 
 const START = Date.UTC(2025, 9, 1);
-const WEEKS = 53;
+const MON = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 function week(t: string) { return Math.floor((parse(t).getTime() - START) / (7 * 864e5)); }
 
 export default function Engineering() {
-  const { now: shown, live } = useClock();
-  // History page: live, it covers the 12 months of meter data; looking back, everything up to that moment.
-  const now = live ? `${DATA_LAST}T23:59` : shown;
-  const alerts = useData<Alert[]>("alerts.json");
-  const faults = useData<Fault[]>("faults.json");
+  const { now, live } = useClock();
+  // History page: everything from 1 Oct 2025 up to the hour shown (live: the current hour, including the live feed so far).
+  const alerts = useAlertsAt(now);
+  const faults = useFaultsAt(now);
   const q = useData<Quality>("quality.json");
   const [site, setSite] = useState<Site | "ALL">("GGN");
   const [sel, setSel] = useState<{ title: string; w: number } | null>(null);
   const nowW = week(now);
+  const WEEKS = Math.max(53, nowW + 1);
+  const ticks: [string, number][] = [];
+  for (let k = 0; ; k += 2) {                     // a label every two months, Oct 2025 onward, up to the hour shown
+    const d = new Date(Date.UTC(2025, 9 + k, 1));
+    if (d.getTime() > parse(now).getTime()) break;
+    ticks.push([`${MON[d.getUTCMonth()]}${d.getUTCMonth() === 0 || k === 0 ? ` ${String(d.getUTCFullYear()).slice(2)}` : ""}`, d.getTime()]);
+  }
 
   const v = useMemo(() => {
     if (!alerts) return null;
@@ -37,7 +43,7 @@ export default function Engineering() {
     }).sort((a, b) => b.cost - a.cost);
     const max = Math.max(1, ...Object.values(grid).flat());
     return { seen, byType, grid, max };
-  }, [alerts, site, now]);
+  }, [alerts, site, now, WEEKS]);
 
   const cellAlerts = sel && v ? v.seen.filter((a) => T(a) === sel.title && week(a.start) === sel.w) : [];
 
@@ -46,7 +52,7 @@ export default function Engineering() {
       <div className="page-head">
         <div>
           <h1>Equipment patterns</h1>
-          <p className="lead">Which problems keep coming back, what they cost, and how quickly they are spotted. Fix the cause of a repeat problem, not each occurrence.{live ? " Covers the 12 months of meter data, October 2025 to September 2026." : ""}</p>
+          <p className="lead">Which problems keep coming back, what they cost, and how quickly they are spotted. Fix the cause of a repeat problem, not each occurrence.{live ? " Covers October 2025 to today; from October 2026 the readings are the live feed (simulated meters)." : ""}</p>
         </div>
         <SiteSwitch value={site} onChange={(s) => { setSite(s); setSel(null); }} />
       </div>
@@ -74,8 +80,8 @@ export default function Engineering() {
               <div style={{ display: "grid", gridTemplateColumns: "250px 1fr", gap: 10 }}>
                 <div />
                 <div style={{ position: "relative", height: 18 }} className="small muted">
-                  {[["Oct", 2025, 9], ["Dec", 2025, 11], ["Feb", 2026, 1], ["Apr", 2026, 3], ["Jun", 2026, 5], ["Aug", 2026, 7]].map(([m, y, mo]) => (
-                    <span key={m as string} style={{ position: "absolute", left: `${((Date.UTC(y as number, mo as number, 1) - START) / (7 * 864e5)) / WEEKS * 100}%` }}>{m}</span>
+                  {ticks.map(([m, t]) => (
+                    <span key={t} style={{ position: "absolute", left: `${((t - START) / (7 * 864e5)) / WEEKS * 100}%` }}>{m}</span>
                   ))}
                 </div>
               </div>
@@ -95,7 +101,7 @@ export default function Engineering() {
       {v && (
         <div className="panel scroll-x">
           <table className="t">
-            <thead><tr><th>Problem</th><th>Hotels</th><th className="r">Times this year</th><th className="r">Last 30 days</th><th className="r">Cost</th><th className="r">Spotted after</th><th>Last seen</th></tr></thead>
+            <thead><tr><th>Problem</th><th>Hotels</th><th className="r">Times so far</th><th className="r">Last 30 days</th><th className="r">Cost</th><th className="r">Spotted after</th><th>Last seen</th></tr></thead>
             <tbody>{v.byType.map((r) => (
               <tr key={r.t}>
                 <td><strong>{r.t}</strong></td><td>{r.hotels.map((s) => SITE_NAME[s]).join(", ")}</td><td className="r">{r.n}</td>
@@ -118,7 +124,7 @@ export default function Engineering() {
                 <tr><td>Alerts that turn out to be real problems</td><td className="r">{Math.round(q.bms.precision * 100)} in 100</td><td className="r"><strong>{Math.round(q.frozen.precision_any * 100)} in 100</strong></td></tr>
                 <tr><td>Serious problems that get flagged</td><td className="r">{Math.round(q.bms.recall * 100)} in 100</td><td className="r"><strong>{Math.round(q.frozen.recall_HM * 100)} in 100</strong></td></tr>
                 <tr><td>Time until someone knows</td><td className="r">{q.bms.median_action_h} hours</td><td className="r"><strong>about 1 hour</strong></td></tr>
-                <tr><td>Alerts a year, all three hotels</td><td className="r">{n(q.bms.alarms)}</td><td className="r"><strong>{n(alerts?.filter((a) => a.channel === "Alert").length ?? 0)}</strong></td></tr>
+                <tr><td>Alerts a year, all three hotels</td><td className="r">{n(q.bms.alarms)}</td><td className="r"><strong>{n(alerts?.filter((a) => a.channel === "Alert" && a.start < LIVE_START).length ?? 0)}</strong></td></tr>
               </tbody>
             </table>
           )}
@@ -129,7 +135,7 @@ export default function Engineering() {
           <table className="t">
             <thead><tr><th>Hotel</th><th>When</th><th>What went wrong</th><th className="r">Hours</th></tr></thead>
             <tbody>{faults?.map((f) => (
-              <tr key={f.start}><td>{f.hotel}</td><td>{fmtDT(f.start, false)}</td><td>{f.kind === "flat line" ? "Reading stuck" : f.kind === "zero reading" ? "Reading zero" : f.kind === "missing readings" ? "No readings" : f.kind}</td><td className="r">{n(f.duration_h, 1)}</td></tr>
+              <tr key={f.site + f.start}><td>{f.hotel}</td><td>{fmtDT(f.start, false)}</td><td>{f.kind === "flat line" ? "Reading stuck" : f.kind === "zero reading" ? "Reading zero" : f.kind === "missing readings" ? "No readings" : f.kind}</td><td className="r">{n(f.duration_h, 1)}</td></tr>
             ))}</tbody>
           </table>
           <p className="muted small" style={{ marginBottom: 0 }}>When the main meter sends bad readings, those hours are left out, so they never cause false alerts or count as savings. Bills issued on bad readings are shown next to the corrected figure in Bills & savings.</p>

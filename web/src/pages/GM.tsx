@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Bar, BarChart, CartesianGrid, Legend, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { useClock } from "../App";
 import { Waterfall } from "../components/parts";
-import { SITE_NAME, useData, type Alert, type BillChange, type Bills, type Site } from "../data";
+import { SITE_NAME, useAlertsAt, useBillsAt, useChangesAt, type BillChange, type Site } from "../data";
 import { fmtMonth, inr, n } from "../format";
 import { SiteSwitch } from "./Shift";
 import { DRIVER } from "../copy";
@@ -36,18 +36,23 @@ function addMonth(m: string) { const [y, mo] = m.split("-").map(Number); return 
 
 export default function GM() {
   const { now } = useClock();
-  const bills = useData<Bills>("bills.json");
-  const changes = useData<Record<string, BillChange>>("bill_changes.json");
-  const alerts = useData<Alert[]>("alerts.json");
+  const bills = useBillsAt(now);                 // original year + live-year bills issued by now
+  const changes = useChangesAt(bills);
+  const alerts = useAlertsAt(now);
   const [site, setSite] = useState<Site>("GGN");
   const months = useMemo(() => bills ? bills.recon.filter((r) => r.site === site).map((r) => r.month).sort() : [], [bills, site]);
   const nowM = now.slice(0, 7);
   const lastM = months[months.length - 1];
   const pending = !!lastM && nowM > lastM;
-  const defB = months.includes(nowM) && months.indexOf(nowM) > 0 ? nowM : pending ? lastM : "2026-05";
+  // Default: the latest month that can be compared with the month before. Attribution runs within one data year (Oct-Sep), so
+  // the first live bill (Oct 2026) has no pair with Sep 2026; it can be compared once later live bills arrive.
+  const has = (p: string, q: string) => !!changes?.[`${site}|${p < q ? p : q}|${p < q ? q : p}`];
+  const upto = months.includes(nowM) ? months.slice(0, months.indexOf(nowM) + 1) : months;
+  const defB = [...upto].reverse().find((m, i, r) => i < r.length - 1 && has(r[i + 1], m)) ?? "2026-05";
+  const defA = months[months.indexOf(defB) - 1] ?? "2026-04";
   const [b, setB] = useState(defB);
-  const [a, setA] = useState(months[months.indexOf(defB) - 1] ?? "2026-04");
-  useEffect(() => { setB(defB); setA(months[months.indexOf(defB) - 1] ?? "2026-04"); }, [site, nowM, months.length]);
+  const [a, setA] = useState(defA);
+  useEffect(() => { setB(defB); setA(defA); }, [site, nowM, months.length, !!changes]);
   const [x, y] = a < b ? [a, b] : [b, a];
   const ch = changes?.[`${site}|${x}|${y}`];
 
@@ -84,7 +89,9 @@ export default function GM() {
         </select>
       </div>
 
-      {x === y ? <p className="muted">Pick two different months.</p> : !ch ? <p className="muted">Loading…</p> : (
+      {x === y ? <p className="muted">Pick two different months.</p> : !changes ? <p className="muted">Loading…</p> : !ch ? (
+        <p className="muted">These two months are in different data years (the original year runs Oct 2025 – Sep 2026, the live feed from Oct 2026), so the bill change can't be split for them. Pick two months from the same year.</p>
+      ) : (
         <div className="split">
           <div className="panel">
             <Waterfall start={ch.bill_a} end={ch.bill_b} startLabel={fmtMonth(x)} endLabel={fmtMonth(y)}
@@ -102,7 +109,7 @@ export default function GM() {
         </div>
       )}
 
-      <h2>The last twelve bills, {SITE_NAME[site]}</h2>
+      <h2>{monthly.length > 12 ? "Every bill so far" : "The last twelve bills"}, {SITE_NAME[site]}</h2>
       <div className="panel">
         <ResponsiveContainer width="100%" height={300}>
           <BarChart data={monthly} margin={{ top: 8, right: 8, bottom: 0, left: 8 }}>

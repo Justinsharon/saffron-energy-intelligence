@@ -1,8 +1,9 @@
 import { useMemo, useState } from "react";
 import { Bar, BarChart, CartesianGrid, ComposedChart, Line, ReferenceArea, ResponsiveContainer, Tooltip, XAxis, YAxis, Cell, LabelList } from "recharts";
 import { Status } from "../components/parts";
-import { SITES, SITE_NAME, useData, type Bills, type Recon, type Savings, type Site } from "../data";
-import { fmtMonth, inr, istNow, n } from "../format";
+import { useClock } from "../App";
+import { SITES, SITE_NAME, useBillsAt, useData, type Recon, type Savings, type Site } from "../data";
+import { fmtMonth, inr, n } from "../format";
 import { SiteSwitch } from "./Shift";
 import { CATEGORY, CONFIDENCE, measureGroup, measureName } from "../copy";
 
@@ -13,7 +14,8 @@ const LINES: [string, string][] = [
 ];
 
 export default function Finance() {
-  const bills = useData<Bills>("bills.json");
+  const { now } = useClock();
+  const bills = useBillsAt(now);                 // original year + live-year bills issued by now (Nov 2026 appears from 5 Dec)
   const sv = useData<Savings>("savings.json");
   const [site, setSite] = useState<Site>("GGN");
   const [sel, setSel] = useState<string | null>(null);
@@ -24,7 +26,7 @@ export default function Finance() {
   const awaited: string[] = [];
   if (rows.length) {
     let [y, m] = rows[rows.length - 1].month.split("-").map(Number);
-    const cur = istNow().slice(0, 7);
+    const cur = now.slice(0, 7);
     for (;;) { m === 12 ? (y++, m = 1) : m++; const k = `${y}-${String(m).padStart(2, "0")}`; if (k >= cur) break; awaited.push(k); }
   }
   const counts = { rec: all.filter((r) => r.status === "Reconciled").length, fault: all.filter((r) => r.status === "Meter fault").length, prov: all.filter((r) => r.status === "Provisional").length };
