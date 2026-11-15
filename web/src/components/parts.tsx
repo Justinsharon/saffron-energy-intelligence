@@ -181,8 +181,8 @@ export function Ticket({ a, now, onAck, acked, defaultOpen = false }: { a: Alert
 }
 
 /** Waterfall: from one value to another through signed drivers. */
-export function Waterfall({ start, end, startLabel, endLabel, steps, height = 300 }:
-  { start: number; end: number; startLabel: string; endLabel: string; steps: { label: string; value: number }[]; height?: number }) {
+export function Waterfall({ start, end, startLabel, endLabel, steps, height = 300, stagger = false }:
+  { start: number; end: number; startLabel: string; endLabel: string; steps: { label: string; value: number }[]; height?: number; stagger?: boolean }) {
   let run = start;
   const rows = [{ label: startLabel, base: 0, value: start, kind: "total" }];
   for (const s of steps) {
@@ -208,7 +208,10 @@ export function Waterfall({ start, end, startLabel, endLabel, steps, height = 30
             const r = rows[p.index ?? 0];
             const txt = r.kind === "total" ? inr(r.value) : (r.kind === "up" ? "+" : "−") + inr(r.value);
             if (r.kind !== "total" && rows.length > 8 && r.value < (hi - lo) * 0.02) return null;   // tiny steps: tooltip only, avoids label pile-ups
-            return <text x={(p.x ?? 0) + (p.width ?? 0) / 2} y={(p.y ?? 0) - 6} textAnchor="middle" fontSize={11} fill="#5c5c5c">{txt}</text>;
+            // stagger: alternate steps put their label inside the bar's bottom edge, so neighbours never overlap (compact / print)
+            const i = p.index ?? 0, low = stagger && r.kind !== "total" && i % 2 === 0;
+            const y = low ? (p.y ?? 0) + (p.height ?? 0) + 12 : (p.y ?? 0) - 6;
+            return <text x={(p.x ?? 0) + (p.width ?? 0) / 2} y={y} textAnchor="middle" fontSize={stagger ? 10 : 11} fill="#5c5c5c">{txt}</text>;
           }} />
         </Bar>
       </ComposedChart>

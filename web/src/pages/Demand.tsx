@@ -109,12 +109,21 @@ function BookingRow({ b, onChange, onRemove }: { b: Booking; onChange: (b: Booki
 }
 
 /** One timed action with Approve / Skip with a reason / Edit time. */
-const BADGE: Record<string, string> = { Followed: "c-ok", Partly: "c-med", "Not followed": "c-high", "Not yet due": "c-low", Skipped: "c-low", "Can't tell (no meter)": "c-dq" };
+const BADGE: Record<string, string> = { Followed: "c-ok", Partly: "c-med", "Not followed": "c-high", "Not yet due": "c-low", Skipped: "c-low", "Can't tell (no meter)": "c-dq",
+  "Not approved": "c-low", "Suggested, not approved": "c-low" };
+const UNCOUNTED = new Set(["Not approved", "Suggested, not approved"]);
 
 /** Plan vs actual for one step: badge, hours that differed, ₹ verified or missed. */
 function CheckLine({ c }: { c: CheckStep }) {
   const money = c.status === "Followed" || c.status === "Partly" ? (c.verified_inr >= 1 ? ` · ${inr(c.verified_inr)} saved so far` : "") : "";
   const miss = c.extra_inr >= 1 ? ` · ${inr(c.extra_inr)} missed` : c.extra_kwh >= 1 ? ` · ${n(c.extra_kwh)} kWh more than planned` : "";
+  if (UNCOUNTED.has(c.status))                                     // only approved steps of a saved plan are checked or counted
+    return (
+      <div className="check-line grey">
+        <span className="chip c-low">{c.status}</span>
+        <span className="small">{c.would_have_saved_inr >= 1 ? `Would have saved ${inr(c.would_have_saved_inr)} if followed. ` : ""}Not checked and not counted: {c.status === "Not approved" ? "the step was never approved" : "no plan was saved for this day"}.</span>
+      </div>
+    );
   return (
     <div className="check-line">
       <span className={`chip ${BADGE[c.status] ?? "c-low"}`}>{c.status}</span>
@@ -312,7 +321,8 @@ function TomorrowPlan() {
                 {planning && <span className="small muted" style={{ fontWeight: 500, marginLeft: 8 }}>updating…</span>}</h2>
               <p className="small muted" style={{ margin: "4px 0 0" }}><strong className="plan-total">{inr(res.total_inr)}</strong> planned saving vs how last year ran on similar days · <strong>{approved} of {actions.length}</strong> approved
                 {saved?.plan && <> · saved by {saved.plan.by} at {saved.plan.at.slice(11)}{saved.storage === "device" ? " (this device only: shared storage is not set up)" : ""}</>}</p>
-              {past && chk && <p className="small" style={{ margin: "4px 0 0" }}><strong>{chk.summary.followed} of {chk.summary.due} due steps followed</strong>
+              {past && chk && chk.summary.approved === 0 && <p className="small muted" style={{ margin: "4px 0 0" }}>{saved?.plan ? "No step of the saved plan was approved" : "No plan was saved for this day"}: the suggested plan would have saved {inr(chk.summary.would_have_saved_inr)} if followed. Not checked and not counted in any total; no deviation alerts.</p>}
+              {past && chk && chk.summary.approved > 0 && <p className="small" style={{ margin: "4px 0 0" }}><strong>{chk.summary.followed} of {chk.summary.due} approved steps followed so far</strong>
                 {chk.summary.not_followed ? `, ${chk.summary.not_followed} not followed` : ""} · <strong style={{ color: "var(--green)" }}>{inr(chk.summary.verified_inr)} saved</strong> / <strong style={{ color: "var(--coral)" }}>{inr(chk.summary.missed_inr)} missed</strong> so far (to {chk.as_of.slice(11, 16)}{chk.as_of.slice(0, 10) !== date ? ` on ${chk.as_of.slice(8, 10)}/${chk.as_of.slice(5, 7)}` : ""})</p>}
               {past && chk === null && <p className="small muted" style={{ margin: "4px 0 0" }}>The plan check needs the planning service, which did not answer. Try again in a minute.</p>}
             </div>
@@ -327,7 +337,7 @@ function TomorrowPlan() {
               <ul>{res.notes.map((x, i) => <li key={i}>{x}</li>)}</ul>
             </div>
           )}
-          {past && chk && <div className="guard note-warn" style={{ marginBottom: 10 }}><span aria-hidden>ⓘ</span><span>{chk.honesty} {chk.source !== "saved plan" ? "No plan was saved for this day, so the suggested plan is checked." : ""}</span></div>}
+          {past && chk && chk.summary.approved > 0 && <div className="guard note-warn" style={{ marginBottom: 10 }}><span aria-hidden>ⓘ</span><span>{chk.honesty} Only approved steps are checked and counted.</span></div>}
           {err && <div className="guard note-warn" style={{ marginBottom: 10 }}><span aria-hidden>⚠</span><span>{err}</span></div>}
           {saved?.plan && dirty && <p className="small" style={{ color: "var(--coral)", marginTop: 0 }}>The plan has changed since it was saved. Approving a step saves the new version first.</p>}
           <ol className="timeline">

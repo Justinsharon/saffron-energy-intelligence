@@ -65,15 +65,17 @@ import type { Alert } from "./data";
 export interface CheckStep {
   id: string; group: string; start: string; end: string; setting: string; equipment: string; status: string; reason?: string;
   hours_checked: number; hours_differed: string[]; extra_kwh: number; extra_inr: number; planned_inr: number; verified_inr: number; what_was_checked: string;
+  would_have_saved_inr: number;          // steps not approved / suggested only: shown in grey, never counted
 }
-export interface CheckSummary { steps: number; due: number; followed: number; partly: number; not_followed: number; not_yet_due: number; cant_tell: number;
+export interface CheckSummary { steps: number; approved: number; due: number; not_approved: number; suggested: number; would_have_saved_inr: number;
+  followed: number; partly: number; not_followed: number; not_yet_due: number; cant_tell: number;
   skipped?: number; planned_inr: number; verified_inr: number; missed_inr: number }
 export interface CheckResult { date: string; as_of: string; source: string; honesty: string; notes: string[]; steps: CheckStep[]; alerts: Alert[];
   covered: Record<string, number[]>; summary: CheckSummary }
 export interface SavingsDay { date: string; source: string; planned_inr: number; verified_inr: number; missed_inr: number; followed: number; partly: number;
   not_followed: number; due: number; steps: number; covered: Record<string, number[]>; deviations: number }
 export interface SavingsResult { month: string; as_of: string; honesty: string; days: SavingsDay[]; method: string;
-  totals: { planned_inr: number; verified_inr: number; missed_inr: number; days: number; saved_days: number } }
+  totals: { planned_inr: number; verified_inr: number; missed_inr: number; days: number; saved_days: number; would_have_saved_inr: number; approved_steps: number } }
 
 async function post<T>(path: string, body: unknown, timeoutMs: number): Promise<T | null> {
   const ctrl = new AbortController();

@@ -8,6 +8,10 @@ Per step: Followed / Partly / Not followed / Not yet due / Can't tell (no meter)
 prices as the plan), and the verified ₹ (followed hours only: actual vs how matched days ran last year - the plan's own yardstick).
 A step Not followed for 2+ hours becomes a PLAN_DEVIATION alert (₹ per occurrence; Daily digest unless ₹ > 2,000).
 
+Only APPROVED steps of a SAVED plan count: they alone get Followed / Not followed, verified or missed ₹, deviation alerts and `covered` hours.
+A saved step not approved is "Not approved"; a skipped one stays "Skipped"; with no saved plan every step is "Suggested, not approved" and
+carries only `would_have_saved_inr` (shown in grey, never in a total, never an alert).
+
 Plan savings and alert savings are separate streams and never double-counted: `covered` lists the hours each followed step covers, and
 the alert side drops its ₹ for those hours and that equipment (web/src/savingsSplit.ts).
 """
@@ -59,7 +63,7 @@ def _hm(h: int) -> str:
     return f"{h % 24:02d}:00" + (" (next day)" if h >= 24 else "")
 
 
-def check_day(date: str, actions: list, meters: pd.DataFrame, as_of: str, ref: dict, tariff: dict, pf: float) -> dict:
+def check_day(date: str, actions: list, meters: pd.DataFrame, as_of: str, ref: dict, tariff: dict, pf: float, suggested: bool = False) -> dict:
     """meters: hourly rows covering the date and the next day, columns timestamp, chiller_ch1_kw, chiller_ch3_kw, chillers_kw,
     chiller_load_tr, chw_setpoint_c, ahu_banquet_kw, laundry_kw, water_heating_kw, ev_chargers_kw, kva, total_kwh."""
     day = pd.Timestamp(date)
@@ -77,11 +81,15 @@ def check_day(date: str, actions: list, meters: pd.DataFrame, as_of: str, ref: d
         if e <= s:
             e += 24
         planned_inr = float(a.get("saving_inr", 0.0))
-        if a.get("decision") == "skip":                              # a recorded decision, not a deviation
-            steps.append(dict(id=a.get("id") or f"{g}|{a['start']}|{a.get('equipment', '')}", group=g, start=a["start"], end=a["end"], setting=a["setting"],
-                              equipment=a.get("equipment", ""), status="Skipped", reason=a.get("decision_reason") or "", hours_checked=0,
-                              hours_differed=[], extra_kwh=0.0, extra_inr=0.0, planned_inr=round(planned_inr, 1), verified_inr=0.0,
-                              what_was_checked="skipped by the team with a reason, so not checked"))
+        sid = a.get("id") or f"{g}|{a['start']}|{a.get('equipment', '')}"
+        if suggested or a.get("decision") != "approve":
+            # only approved steps of a saved plan are checked or counted
+            st = "Suggested, not approved" if suggested else "Skipped" if a.get("decision") == "skip" else "Not approved"
+            steps.append(dict(id=sid, group=g, start=a["start"], end=a["end"], setting=a["setting"], equipment=a.get("equipment", ""), status=st,
+                              reason=a.get("decision_reason") or "", hours_checked=0, hours_differed=[], extra_kwh=0.0, extra_inr=0.0, planned_inr=0.0,
+                              verified_inr=0.0, would_have_saved_inr=round(planned_inr, 1) if st != "Skipped" else 0.0,
+                              what_was_checked={"Skipped": "skipped by the team with a reason, so not checked",
+                                                "Not approved": "not approved, so not checked or counted"}.get(st, "suggested only: no plan was saved")))
             continue
         dev, hrs, extra_kwh, extra_inr, ver, no_meter, per_hour_extra = [], [], 0.0, 0.0, 0.0, 0, {}
         # hours this step is judged on
@@ -169,7 +177,7 @@ def check_day(date: str, actions: list, meters: pd.DataFrame, as_of: str, ref: d
         fol = [h for h in hrs if h not in dev]
         if status in ("Followed", "Partly") and fol:
             covered.setdefault(g, []).extend(h for h in fol if h < 24)
-        step = dict(id=a.get("id") or f"{g}|{a['start']}|{a.get('equipment', '')}", group=g, start=a["start"], end=a["end"], setting=a["setting"],
+        step = dict(id=sid, group=g, start=a["start"], end=a["end"], setting=a["setting"], would_have_saved_inr=0.0,
                     equipment=a.get("equipment", ""), status=status, hours_checked=n, hours_differed=[_hm(h) for h in dev],
                     extra_kwh=round(extra_kwh, 1), extra_inr=round(extra_inr, 1), planned_inr=round(planned_inr, 1), verified_inr=round(ver, 1),
                     what_was_checked=_checked(g))
@@ -178,10 +186,12 @@ def check_day(date: str, actions: list, meters: pd.DataFrame, as_of: str, ref: d
             alerts.append(_alert(date, a, dev, n, extra_kwh, extra_inr, meters, day, cut, per_hour_extra))
     tot = lambda k: round(sum(x[k] for x in steps), 1)
     cnt = lambda st: sum(1 for x in steps if x["status"] == st)
-    due = [x for x in steps if x["status"] not in ("Not yet due", "Can't tell (no meter)", "Skipped")]
+    approved = [x for x in steps if x["status"] not in ("Skipped", "Not approved", "Suggested, not approved")]
+    due = [x for x in approved if x["status"] not in ("Not yet due", "Can't tell (no meter)")]
     return dict(date=date, as_of=cut.strftime("%Y-%m-%dT%H:00"), honesty=HONESTY, steps=steps, alerts=alerts,
                 covered={k: sorted(set(v)) for k, v in covered.items()},
-                summary=dict(steps=len(steps), due=len(due), followed=cnt("Followed"), partly=cnt("Partly"), not_followed=cnt("Not followed"),
+                summary=dict(steps=len(steps), approved=len(approved), due=len(due), not_approved=cnt("Not approved"), suggested=cnt("Suggested, not approved"),
+                             would_have_saved_inr=tot("would_have_saved_inr"), followed=cnt("Followed"), partly=cnt("Partly"), not_followed=cnt("Not followed"),
                              not_yet_due=cnt("Not yet due"), cant_tell=cnt("Can't tell (no meter)"), skipped=cnt("Skipped"), planned_inr=tot("planned_inr"),
                              verified_inr=tot("verified_inr"), missed_inr=tot("extra_inr")))
 

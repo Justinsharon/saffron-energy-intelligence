@@ -19,11 +19,13 @@ export function TodayPlanCard({ now, dc, onPlan }: { now: string; dc: DayCheck |
   const decision = (id: string) => v?.decisions[id]?.event;
   const due = steps.filter((x) => x.status !== "Not yet due");
   const next = steps.filter((x) => x.e > h && x.status !== "Skipped").sort((a, b) => a.s - b.s).slice(0, 3);
-  const summary = chk && chk.summary.due > 0 && (
-    <p className="small" style={{ margin: "8px 0 0" }}><strong>{chk.summary.followed} of {chk.summary.due} due steps followed</strong>
+  const summary = chk && (chk.summary.approved === 0 ? (chk.summary.would_have_saved_inr >= 1 &&
+    <p className="small muted" style={{ margin: "8px 0 0" }}>Suggested, not approved: would have saved {inr(chk.summary.would_have_saved_inr)} if followed. Not counted.</p>)
+    : chk.summary.due > 0 && (
+    <p className="small" style={{ margin: "8px 0 0" }}><strong>{chk.summary.followed} of {chk.summary.due} approved steps followed</strong>
       {chk.summary.not_followed ? `, ${chk.summary.not_followed} not followed` : ""} · {inr(chk.summary.verified_inr)} saved / {inr(chk.summary.missed_inr)} missed so far
       <span className="muted"> · {chk.honesty}</span></p>
-  );
+  ));
   const notFollowed = due.filter((x) => x.status === "Not followed").slice(0, 2);
   const rows = (
     <div className="next">
@@ -32,8 +34,9 @@ export function TodayPlanCard({ now, dc, onPlan }: { now: string; dc: DayCheck |
           <span className="t">{span(x.start, x.end, h, x.s)}</span>
           <span className="tag">{TAG[x.group as keyof typeof TAG]}</span>
           <span>{x.setting}</span>
-          <span className={`st ${x.status !== "Not yet due" ? BADGE[x.status] ?? "" : decision(x.id) === "approve" ? "ok" : ""}`}>
-            {x.status !== "Not yet due" ? x.status.toLowerCase() + " so far" : !v?.plan ? "suggested" : decision(x.id) === "approve" ? `approved by ${v.decisions[x.id].by}` : "needs approval"}</span>
+          <span className={`st ${["Followed", "Partly", "Not followed"].includes(x.status) ? BADGE[x.status] ?? "" : decision(x.id) === "approve" ? "ok" : ""}`}>
+            {["Followed", "Partly", "Not followed"].includes(x.status) ? x.status.toLowerCase() + " so far" : !v?.plan ? "suggested, not approved"
+              : x.status === "Skipped" ? "skipped" : decision(x.id) === "approve" ? `approved by ${v.decisions[x.id].by}` : "needs approval"}</span>
         </div>
       ))}
       {notFollowed.filter((x) => !next.includes(x)).map((x) => (
@@ -45,7 +48,7 @@ export function TodayPlanCard({ now, dc, onPlan }: { now: string; dc: DayCheck |
   if (!v?.plan) {
     return (<>{head}<div className="panel flat today-plan">
       <p style={{ margin: 0 }}><strong>No plan was saved for today.</strong> Plans are made the day before: enter the bookings on <button className="ask-inline" onClick={onPlan}>Tomorrow's plan</button> and approve the steps, so the night shift knows how to run the chillers, laundry and water heating.</p>
-      {steps.length > 0 && <p className="small muted" style={{ margin: "10px 0 0" }}>The suggested plan (usual pattern, no bookings; not approved), checked against the meters:</p>}
+      {steps.length > 0 && <p className="small muted" style={{ margin: "10px 0 0" }}>The suggested plan (usual pattern, no bookings), shown for reference only: not approved, so not checked or counted.</p>}
       {steps.length > 0 && rows}
       {summary}
       {chk === null && <p className="small muted" style={{ margin: "8px 0 0" }}>The plan check needs the planning service, which did not answer.</p>}

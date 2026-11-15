@@ -20,7 +20,8 @@ export function MonthSavingsPanel({ now }: { now: string }) {
         <div className="stat"><span>From acting on alerts</span><b>{m.alerts ? inr(m.alerts.inr) : "…"}</b>
           <em>{m.alerts ? `${m.alerts.alerts} alerts in ${fmtMonth(month)}; waste caught, counted once fixed${m.alerts.dropped_inr >= 1 ? ` (${inr(m.alerts.dropped_inr)} left out: the daily plan already covered those hours)` : ""}` : "loading"}</em></div>
         <div className="stat"><span>From the daily plan (verified)</span><b>{p ? inr(p.totals.verified_inr) : p === null ? "—" : "…"}</b>
-          <em>{p ? `${p.totals.days} days checked (${p.totals.saved_days} with a saved plan, the rest the suggested plan); ${inr(p.totals.planned_inr)} planned, ${inr(p.totals.missed_inr)} missed`
+          <em>{p ? `${p.totals.approved_steps} approved steps on ${p.totals.saved_days} saved ${p.totals.saved_days === 1 ? "day" : "days"}: ${inr(p.totals.planned_inr)} planned, ${inr(p.totals.missed_inr)} missed. `
+            + `Suggested plans on days with no saved plan would have saved ${inr(p.totals.would_have_saved_inr)} if followed (not counted).`
             : p === null ? "the planning service did not answer" : "checking the meters"}</em></div>
         <div className="stat"><span>Total effect (Option C)</span><b style={{ color: m.optionC && m.optionC.inr < 0 ? "var(--coral)" : undefined }}>{m.optionC ? inr(m.optionC.inr) : "…"}</b>
           <em>{m.optionC ? `${n(m.optionC.kwh)} kWh ${m.optionC.kwh >= 0 ? "below" : "above"} what the weather, guests and events called for, all three hotels` : "loading"}</em></div>

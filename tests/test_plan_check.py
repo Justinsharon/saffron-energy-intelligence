@@ -31,6 +31,7 @@ def meters(**over):
 
 
 def act(group, start, end, setting, **kw):
+    kw.setdefault("decision", "approve")                      # only approved steps of a saved plan are checked
     return dict(group=group, start=start, end=end, setting=setting, equipment=group, saving_inr=100.0, **kw)
 
 
@@ -88,6 +89,26 @@ def test_skipped_step_is_not_a_deviation():
     assert r["steps"][0]["status"] == "Skipped" and not r["alerts"] and r["summary"]["skipped"] == 1
 
 
+def test_unapproved_and_suggested_steps_are_never_counted():
+    bad = meters(chiller_ch1_kw=(range(5, 12), 80.0), chillers_kw=(range(5, 12), 140.0))
+    a = [act("chillers", "05:00", "12:00", "CH-3 alone (150 TR scroll chiller)", decision=None)]
+    r = PC.check_day(DATE, a, bad, f"{DATE}T13:00", REF, TARIFF, 0.97)
+    st = r["steps"][0]
+    assert st["status"] == "Not approved" and not r["alerts"] and st["extra_inr"] == 0 and st["would_have_saved_inr"] == 100.0
+    assert r["summary"]["verified_inr"] == 0 and r["summary"]["missed_inr"] == 0 and r["summary"]["planned_inr"] == 0
+    r = PC.check_day(DATE, [act("chillers", "05:00", "12:00", "CH-3 alone (150 TR scroll chiller)")], bad, f"{DATE}T13:00", REF, TARIFF, 0.97, suggested=True)
+    st = r["steps"][0]
+    assert st["status"] == "Suggested, not approved" and not r["alerts"] and r["summary"]["would_have_saved_inr"] == 100.0
+    assert r["summary"]["verified_inr"] == 0 and r["covered"] == {}
+
+
+def test_only_approved_followed_steps_are_covered():
+    a = [act("chillers", "00:00", "12:00", "CH-3 alone (150 TR scroll chiller)"),
+         act("chw", "00:00", "12:00", "8.0 °C", setpoint_c=8.0, decision=None)]
+    r = PC.check_day(DATE, a, meters(), f"{DATE}T13:00", REF, TARIFF, 0.97)
+    assert set(r["covered"]) == {"chillers"} and r["summary"]["approved"] == 1 and r["summary"]["not_approved"] == 1
+
+
 # ---- API ------------------------------------------------------------------------------------------------------------------------------
 @pytest.fixture(scope="module")
 def c():
@@ -103,6 +124,8 @@ def test_check_endpoint_cuts_at_now(c):
     j = client.post("/check", json={"date": today}).json()
     now_h = datetime.now(timezone(timedelta(hours=5, minutes=30))).strftime("%Y-%m-%dT%H")
     assert j["as_of"][:13] <= now_h and "simulated" in j["honesty"] and "suggested plan" in j["source"]
+    assert not j["alerts"] and j["summary"]["verified_inr"] == 0 and j["summary"]["missed_inr"] == 0           # no saved plan: nothing counted
+    assert all(x["status"] == "Suggested, not approved" for x in j["steps"])
     for a in j["alerts"]:
         assert a["alert_time"][:13] <= now_h and all(t <= now_h for t in a["chart"]["t"])
     future = client.post("/check", json={"date": today, "as_of": "2099-01-01T00:00"}).json()       # asking ahead is clamped to now
@@ -113,5 +136,10 @@ def test_savings_endpoint_month(c):
     client, A = c
     j = client.post("/savings", json={"month": "2026-10"}).json()
     t = j["totals"]
-    assert t["days"] == 30 and t["verified_inr"] <= t["planned_inr"] + t["verified_inr"] and "never added to alert savings" in j["method"]
+    assert t["days"] == 30 and "never added to alert savings" in j["method"]
+    assert t["verified_inr"] == 0 and t["planned_inr"] == 0 and t["would_have_saved_inr"] > 0          # no saved plans: suggested only
+    approved = [dict(a, decision="approve") for a in client.post("/plan", json={"date": "2026-10-10"}).json()["actions"]]
+    j = client.post("/savings", json={"month": "2026-10", "saved": {"2026-10-10": approved}}).json()
+    day = [d for d in j["days"] if d["date"] == "2026-10-10"][0]
+    assert day["source"] == "saved" and day["approved"] == len(approved) and j["totals"]["verified_inr"] == day["verified_inr"]
     assert client.post("/savings", json={"month": "2030-01"}).status_code == 422

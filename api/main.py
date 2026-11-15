@@ -334,25 +334,26 @@ def _as_of(raw) -> str:
     return a if re.fullmatch(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}", a) and a < now else now      # look back is allowed; ahead is not
 
 
-def _check(date: str, actions: list | None, as_of: str) -> tuple[int, dict]:
+def _check(date: str, actions: list | None, as_of: str, suggested: bool = False) -> tuple[int, dict]:
     notes: list[str] = []
-    source = "saved plan"
+    source = "suggested plan (no plan was saved for this day)" if suggested else "saved plan"
     if not actions:
+        suggested = True
         st, p = compute_plan({"date": date}, [])
         if st != 200:
             return st, p
         actions, source = p["actions"], "suggested plan (no plan was saved for this day: usual pattern, no bookings)"
-        notes.append("No plan was saved for this day, so the suggested plan (usual pattern, no bookings) is checked.")
+        notes.append("No plan was saved for this day: the suggested plan is shown with what it would have saved, but nothing is checked or counted.")
     if date > as_of[:10]:
         return 200, dict(date=date, as_of=as_of, source=source, notes=notes + ["This day has not started yet; nothing to check."],
                          honesty=PC.HONESTY, steps=[], alerts=[], covered={}, summary=dict(steps=len(actions), due=0, followed=0, partly=0,
                          not_followed=0, not_yet_due=len(actions), cant_tell=0, planned_inr=round(sum(a.get("saving_inr", 0) for a in actions), 1),
                          verified_inr=0.0, missed_inr=0.0))
     final = as_of[:10] > (pd.Timestamp(date) + pd.Timedelta(days=1)).strftime("%Y-%m-%d")      # next day over too: water heating window done
-    key = (date, json.dumps(actions, sort_keys=True), "final" if final else as_of[:13])
+    key = (date, json.dumps(actions, sort_keys=True), suggested, "final" if final else as_of[:13])
     if key not in _CHECK:
         ref = dict(REFS[date], curve=META["curve"], ahu_overrun_kwh=META["ahu_overrun_kwh"], chw_pct_per_c=META.get("chw_pct_per_c"))
-        _CHECK[key] = PC.check_day(date, actions, PC.meters_for(LIVE, date), as_of, ref, META["tariff"], META["pf"])
+        _CHECK[key] = PC.check_day(date, actions, PC.meters_for(LIVE, date), as_of, ref, META["tariff"], META["pf"], suggested=suggested)
     out = dict(_CHECK[key], source=source, notes=notes)
     return 200, out
 
@@ -366,10 +367,10 @@ async def check(req: Request):
     if date not in REFS:
         return JSONResponse({"error": f"No plan context for {date}. Dates covered: {META['dates'][0]} to {META['dates'][1]}."}, status_code=422)
     acts = b.get("actions") if isinstance(b.get("actions"), list) else None
-    st, out = _check(date, acts, _as_of(b.get("as_of")))
-    if st == 200 and acts and b.get("plan_source") == "suggested":       # the page sends the suggested plan it shows
-        out = dict(out, source="suggested plan (no plan was saved for this day)")
-        out["notes"] = ["No plan was saved for this day, so the suggested plan shown is checked."] + out["notes"]
+    sugg = b.get("plan_source") == "suggested"                           # the page sends the suggested plan it shows
+    st, out = _check(date, acts, _as_of(b.get("as_of")), suggested=sugg)
+    if st == 200 and acts and sugg:
+        out["notes"] = ["No plan was saved for this day: the suggested plan is shown with what it would have saved, but nothing is checked or counted."] + out["notes"]
     if st == 200:
         out["notes"] = notes + out["notes"]
     return out if st == 200 else JSONResponse(out, status_code=st)
@@ -393,10 +394,11 @@ async def savings(req: Request):
         if st != 200:
             continue
         rows.append(dict(date=d, source="saved" if saved.get(d) else "suggested", **{k: c["summary"][k] for k in ("planned_inr", "verified_inr", "missed_inr",
-                         "followed", "partly", "not_followed", "due", "steps")}, covered=c["covered"], deviations=len(c["alerts"])))
+                         "would_have_saved_inr", "approved", "followed", "partly", "not_followed", "due", "steps")}, covered=c["covered"], deviations=len(c["alerts"])))
     tot = lambda k: round(sum(r[k] for r in rows), 1)
     return dict(month=month, as_of=as_of, honesty=PC.HONESTY, days=rows, notes=notes,
                 totals=dict(planned_inr=tot("planned_inr"), verified_inr=tot("verified_inr"), missed_inr=tot("missed_inr"), days=len(rows),
+                            would_have_saved_inr=tot("would_have_saved_inr"), approved_steps=sum(r["approved"] for r in rows),
                             saved_days=sum(1 for r in rows if r["source"] == "saved")),
-                method="Verified = followed steps only, actual meters vs how matched days ran last year (same month, day type, cooling load), "
+                method="Only approved steps of saved plans count. Verified = approved steps that were followed, actual meters vs how matched days ran last year (same month, day type, cooling load), "
                        "at the plan's tariff prices; never added to alert savings for the same hours.")
