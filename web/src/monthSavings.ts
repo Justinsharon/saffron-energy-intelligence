@@ -1,7 +1,9 @@
 // Savings for one month, split so nothing is counted twice (used by Bills & savings and the monthly report, so they always agree):
-//   from the daily plan  - verified ₹ of followed plan steps (POST /api/savings; saved plans where they exist, else the suggested plan);
-//   from acting on alerts - ₹ of waste the alerts caught in the month; for Gurugram, hours where a followed plan step covers the same
-//                          equipment are dropped (that saving is the plan's, not the alert's);
+//   from the daily plan  - verified ₹ of approved, followed steps of saved plans (POST /api/savings). An operational measure: shown here,
+//                          on the plan pages and in the monthly report, never added to the yearly savings headline (src/savings.py);
+//   from acting on alerts - ₹ of waste the alerts caught in the month, in full (as the headline counts it). For Gurugram, `overlap_inr` is
+//                          the part in hours an approved, followed plan step also covered (same equipment): display only, and taken off
+//                          once wherever plan and alert ₹ are added together (the monthly report's "found");
 //   Option C             - adjusted baseline (weather, occupancy, events) minus actual kWh per hotel, up to the hour shown: the total effect
 //                          however it is split. Meter-fault hours are excluded (T5).
 import { useEffect, useMemo, useState } from "react";
@@ -31,9 +33,9 @@ export function growthKwh(hr: Record<Site, Hourly | null>, month: string, asOf: 
   return out;
 }
 
-/** Alert ₹ in the month (by alert start), less the hours a followed plan step already covers for that equipment (Gurugram). */
+/** Alert ₹ in the month (by alert start), in full, and the part in hours a followed plan step also covers for that equipment (Gurugram). */
 export function alertRupees(alerts: Alert[], month: string, covered: Record<string, Record<string, number[]>>) {
-  let total = 0, dropped = 0, n = 0;
+  let total = 0, overlap = 0, n = 0;
   for (const a of alerts) {
     if (a.start.slice(0, 7) !== month || a.cost <= 0 || a.rule === "PLAN_DEVIATION") continue;
     n++;
@@ -41,23 +43,23 @@ export function alertRupees(alerts: Alert[], month: string, covered: Record<stri
     let keep = a.cost;
     if (g) {
       const hrs = Math.max(1, Math.round((ms(a.end) - ms(a.start)) / 3.6e6));
-      let overlap = 0;
+      let ov = 0;
       for (let t = ms(a.start); t < ms(a.end); t += 3.6e6) {
         const iso = new Date(t).toISOString(), d = iso.slice(0, 10), h = Number(iso.slice(11, 13));
-        if (covered[d]?.[g]?.includes(h)) overlap++;
+        if (covered[d]?.[g]?.includes(h)) ov++;
       }
-      keep = a.cost * (1 - overlap / hrs);
-      dropped += a.cost - keep;
+      keep = a.cost * (1 - ov / hrs);
+      overlap += a.cost - keep;
     }
-    total += keep;
+    total += a.cost;
   }
-  return { inr: total, dropped_inr: dropped, alerts: n };
+  return { inr: total, overlap_inr: overlap, alerts: n };
 }
 
 export interface MonthSavings {
   month: string; asOf: string;
   plan: SavingsResult | null | undefined;                 // undefined = loading, null = service unavailable or no live days
-  alerts: { inr: number; dropped_inr: number; alerts: number } | null;
+  alerts: { inr: number; overlap_inr: number; alerts: number } | null;
   optionC: { bySite: Record<Site, { actual: number; baseline: number; kwh: number; inr: number; hours: number; rate: number }>; kwh: number; inr: number } | null;
   hourly: Record<Site, Hourly | null>;
 }

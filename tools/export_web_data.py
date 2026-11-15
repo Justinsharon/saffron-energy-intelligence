@@ -159,7 +159,7 @@ def export_forecast():
 
 
 def export_savings():
-    from savings import NOT_SIZED, model_stats, plan
+    from savings import NOT_SIZED, model_stats, plan, totals
     p = plan()
     stats = {}
     for s in SITE_LIST:
@@ -167,7 +167,9 @@ def export_savings():
         mv = m.pop("monthly").reset_index()
         stats[s] = dict(m, monthly=mv.to_dict("records"))
     bill = float(pd.read_parquet(CLEAN / "monthly_bills.parquet").total_energy_cost_inr.sum())
-    write("savings.json", dict(measures=p.to_dict("records"), not_sized=NOT_SIZED, option_c=stats, group_bill=bill, target=[0.08, 0.12]), also_fn=True)
+    # totals: operations (all but Capital) and with capital; live mode writes live_feed/savings.json, the "checked on the live year" line
+    write("savings.json", dict(measures=p.to_dict("records"), not_sized=NOT_SIZED, option_c=stats, group_bill=bill, target=[0.08, 0.12],
+                               totals=totals(p)), also_fn=True)
 
 
 def export_quality():
@@ -264,6 +266,7 @@ if __name__ == "__main__":
         export_alerts(F)
         freeze_attribution()
         export_bills()
+        export_savings()
         sys.exit(0)
     export_hotels(F)
     export_alerts(F)

@@ -306,15 +306,14 @@ const TOOLS: Record<string, { fn: (a: J) => J | Promise<J>; desc: string; params
     },
   },
   savings_plan: {
-    desc: "Sized savings measures (energy / ToD / demand) with safety notes; capital items shown separately.",
+    desc: "Sized savings measures (energy / ToD / demand) with safety notes. Two totals: from operations, and with one capital item (pump VFDs, needs investment).",
     params: {},
     fn: () => {
-      const s = savings as J; const core = s.measures.filter((m: J) => m.category !== "Capital (note)");
-      const tot = core.reduce((a: number, m: J) => a + m.inr, 0), all = s.measures.reduce((a: number, m: J) => a + m.inr, 0);
+      const s = savings as J, t = s.totals as J;
       const by: J = {}; for (const m of s.measures) by[m.category] = r0((by[m.category] ?? 0) + m.inr);
-      return { total_inr: r0(tot), pct_of_group_bill: Math.round(tot / s.group_bill * 1000) / 10, with_capital_note_inr: r0(all),
-        with_capital_note_pct: Math.round(all / s.group_bill * 1000) / 10, target_pct: "8-12", by_category_inr: by,
-        measures: s.measures.map((m: J) => ({ hotel: m.hotel, measure: plainMeasure(m.measure), kind: ({ Energy: "use less", ToD: "use at cheaper times", Demand: "lower peak charges", "Capital (note)": "needs investment" } as J)[m.category] ?? m.category, inr: r0(m.inr), how_sure: String(m.confidence).startsWith("High") ? "measured" : String(m.confidence).startsWith("Medium") ? "estimated" : "rough estimate", safety: m.safety })) };
+      return { operations_inr: r0(t.operations_inr), operations_pct: t.operations_pct, with_capital_inr: r0(t.with_capital_inr), with_capital_pct: t.with_capital_pct,
+        capital_item: "pump speed controls (VFDs): needs investment; payback needs a supplier quote", target_pct: "8-12", by_category_inr: by,
+        measures: s.measures.map((m: J) => ({ hotel: m.hotel, measure: plainMeasure(m.measure), kind: ({ Energy: "use less", ToD: "use at cheaper times", Demand: "lower peak charges", Capital: "needs investment" } as J)[m.category] ?? m.category, inr: r0(m.inr), how_sure: String(m.confidence).startsWith("High") ? "measured" : String(m.confidence).startsWith("Medium") ? "estimated" : "rough estimate", safety: m.safety, ...(m.payback ? { payback: m.payback } : {}) })) };
     },
   },
 };
@@ -430,7 +429,7 @@ function template(calls: [string, J, J][]): string {
           (h.latest_bill ? ` Latest bill: ${h.latest_bill.month}, ${f(h.latest_bill.total_inr)}.` : ""));
       }
     }
-    else if (n === "savings_plan") { p.push(`We can save about ${f(r.total_inr)} a year, ${r.pct_of_group_bill}% of the electricity bill (${r.with_capital_note_pct}% with investments). The biggest items:`); for (const m of [...r.measures].sort((a: J, b: J) => b.inr - a.inr).slice(0, 6)) p.push(`- ${m.hotel}: ${m.measure}: ${f(m.inr)} a year`); }
+    else if (n === "savings_plan") { p.push(`From operations we can save about ${f(r.operations_inr)} a year, ${r.operations_pct}% of the electricity bill. With one capital item (pump speed controls, which needs investment) it is ${f(r.with_capital_inr)}, ${r.with_capital_pct}%. The biggest items:`); for (const m of [...r.measures].sort((a: J, b: J) => b.inr - a.inr).slice(0, 6)) p.push(`- ${m.hotel}: ${m.measure}: ${f(m.inr)} a year`); }
   }
   return p.join("\n");
 }

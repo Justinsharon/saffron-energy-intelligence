@@ -104,6 +104,7 @@ export function measureName(m: string): string {
   if (m.startsWith("Shift flexible")) return m.includes("water heating") ? "Move laundry, water heating and EV charging out of the evening peak" : "Move laundry out of the evening peak";
   if (m.startsWith("CHW reset")) return "Run chilled water at 8 °C on cool, quiet days";
   if (m.startsWith("VFDs")) return "Fit speed controls to the chilled-water pumps (investment)";
+  if (m.startsWith("Daily operating plan")) return "Follow the daily plan: lower peak demand in months without a penalty";
   return m;
 }
 export function measureGroup(m: string): string {
@@ -115,9 +116,10 @@ export function measureGroup(m: string): string {
   if (m.startsWith("Shift flexible")) return "Move loads off evening peak";
   if (m.startsWith("CHW reset")) return "Warmer chilled water on cool days";
   if (m.startsWith("VFDs")) return "Pump speed controls (investment)";
+  if (m.startsWith("Daily operating plan")) return "Daily plan: lower peak demand";
   return m;
 }
-export const CATEGORY: Record<string, string> = { Energy: "Use less", ToD: "Use at cheaper times", Demand: "Lower peak charges", "Capital (note)": "Needs investment" };
+export const CATEGORY: Record<string, string> = { Energy: "Use less", ToD: "Use at cheaper times", Demand: "Lower peak charges", Capital: "Needs investment" };
 export const CONFIDENCE = (c: string) => (c.startsWith("High") ? "Measured" : c.startsWith("Medium") ? "Estimated" : "Rough estimate");
 
 export const LOAD: Record<string, string> = {

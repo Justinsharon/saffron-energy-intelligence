@@ -1,0 +1,8 @@
+lever,kwh,inr,category,already_counted_as
+Chiller sequencing to the forecast load,43661.65364560569,362819.02142548276,Energy,staging alerts
+Chilled water back to 7.0 °C,13721.020902612825,114018.7547006849,Energy,setpoint alerts
+Chilled water 8.0 °C on cool hours,6296.958849160333,52326.38383678866,Energy,CHW reset measure
+Banquet AHUs on 1 h before / off 1 h after,23742.4,197294.27575538828,Energy,hand-mode AHU alerts
+Laundry out of the 18–22 peak,0.0,3848.335773950706,ToD,flexible-load shift
+Water heating moved to 23–05,0.0,41801.93831081778,ToD,flexible-load shift
+Lower monthly maximum demand,0.0,100486.98359641127,Demand,breach measure (penalty months only)

@@ -13,8 +13,8 @@ export interface ReportData {
   bills: Record<Site, { this: number | null; prev: number | null; last_year: number | null }>;
   option_c: { by_site: Record<Site, { actual_kwh: number; baseline_kwh: number; kwh: number; inr: number }>; kwh: number; inr: number } | null;
   savings: { plan: { verified_inr: number; planned_inr: number; missed_inr: number; would_have_saved_inr: number; approved_steps: number; saved_days: number } | null;
-    plan_note: string | null; alerts: { inr: number; dropped_inr: number; alerts: number } | null };
-  gap: { found_inr: number; option_c_inr: number; gap_inr: number; growth_inr: number; growth_kwh: number; rest_inr: number } | null;
+    plan_note: string | null; alerts: { inr: number; overlap_inr: number; alerts: number } | null };
+  gap: { found_inr: number; overlap_inr?: number; option_c_inr: number; gap_inr: number; growth_inr: number; growth_kwh: number; rest_inr: number } | null;
   drivers: { complete: boolean; prev_total: number; this_total: number; steps: { group: string; inr: number }[] };
   bill_check: { site: Site; status: string; billed_minus_corrected: number }[];
   problems: { hotel: string; rule: string; title: string; inr: number; status: string }[];
@@ -92,6 +92,8 @@ function Sheet({ r }: { r: ReportData }) {
             <tbody>
               <tr><td>From the daily plan (approved steps, verified)</td><td className="r">{p ? inr(p.verified_inr) : r.savings.plan_note ? "—" : "…"}</td></tr>
               <tr><td>From acting on alerts</td><td className="r">{r.savings.alerts ? inr(r.savings.alerts.inr) : "…"}</td></tr>
+              {r.savings.alerts && r.savings.alerts.overlap_inr >= 1 && (
+                <tr><td className="muted">In both: same hours and equipment, counted once</td><td className="r muted">−{inr(r.savings.alerts.overlap_inr)}</td></tr>)}
               <tr className="tot"><td>Total effect (Option C, all hotels)</td><td className="r">{oc ? inr(oc.inr) : "…"}</td></tr>
             </tbody>
           </table>
@@ -100,7 +102,7 @@ function Sheet({ r }: { r: ReportData }) {
               baseline (trained on last year) does not adjust for: {inr(g.growth_inr)} ({n(g.growth_kwh)} kWh) this month. The other {inr(g.rest_inr)} is mostly waste from new faults
               that the alerts caught but that still ran on the meters, plus model noise.</p>
           )}
-          <p className="tiny">{p ? `${p.approved_steps} approved steps on ${p.saved_days} saved ${p.saved_days === 1 ? "day" : "days"}${p.would_have_saved_inr >= 1 ? `; suggested plans on other days would have saved ${inr(p.would_have_saved_inr)} if followed (not counted)` : ""}. ` : r.savings.plan_note ? `${r.savings.plan_note} ` : ""}Method: {r.method}</p>
+          <p className="tiny">{p ? `${p.approved_steps} approved steps on ${p.saved_days} saved ${p.saved_days === 1 ? "day" : "days"}${p.would_have_saved_inr >= 1 ? `; suggested plans on other days would have saved ${inr(p.would_have_saved_inr)} if followed (not counted)` : ""}. ` : r.savings.plan_note ? `${r.savings.plan_note} ` : ""}Plan savings are an operational measure: they count here, never in the yearly savings headline. Method: {r.method}</p>
 
           <h3>d) Bill check</h3>
           <table className="t compact">
@@ -163,7 +165,7 @@ function useLiveReport(m: string, now: string): ReportData | null {
       would_have_saved_inr: sav.plan.totals.would_have_saved_inr, approved_steps: sav.plan.totals.approved_steps, saved_days: sav.plan.totals.saved_days } : null;
     const live = m >= "2026-10";
     const gKwh = live && hr ? growthKwh(hr, m, asOf) : null;
-    const found = (sav.alerts?.inr ?? 0) + (plan?.verified_inr ?? 0);
+    const found = (sav.alerts?.inr ?? 0) - (sav.alerts?.overlap_inr ?? 0) + (plan?.verified_inr ?? 0);     // overlap is in both: once
     const growthInr = gKwh && oc ? SITES.reduce((x, s) => x + gKwh[s] * oc.bySite[s].rate, 0) : 0;
     return {
       month: m, as_of: asOfDate, simulated: live,
@@ -171,7 +173,7 @@ function useLiveReport(m: string, now: string): ReportData | null {
       option_c: oc ? { by_site: Object.fromEntries(SITES.map((s) => [s, { actual_kwh: oc.bySite[s].actual, baseline_kwh: oc.bySite[s].baseline, kwh: oc.bySite[s].kwh, inr: oc.bySite[s].inr }])) as ReportData["option_c"] extends infer T ? T extends { by_site: infer B } ? B : never : never,
                        kwh: oc.kwh, inr: oc.inr } : null,
       savings: { plan, plan_note: live ? null : "Daily plans started in Oct 2026.", alerts: sav.alerts },
-      gap: live && oc && gKwh ? { found_inr: found, option_c_inr: oc.inr, gap_inr: found - oc.inr, growth_inr: growthInr, growth_kwh: SITES.reduce((x, s) => x + gKwh[s], 0),
+      gap: live && oc && gKwh ? { found_inr: found, overlap_inr: sav.alerts?.overlap_inr ?? 0, option_c_inr: oc.inr, gap_inr: found - oc.inr, growth_inr: growthInr, growth_kwh: SITES.reduce((x, s) => x + gKwh[s], 0),
                                   rest_inr: found - oc.inr - growthInr } : null,
       drivers: { complete: have === SITES.length, prev_total: SITES.reduce((x, s) => x + (val(s, prev) ?? 0), 0), this_total: SITES.reduce((x, s) => x + (val(s, m) ?? 0), 0), steps },
       bill_check: SITES.map((s) => bills.recon.find((r) => r.site === s && r.month === m)).filter((r): r is Recon => !!r)

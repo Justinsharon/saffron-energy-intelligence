@@ -38,9 +38,10 @@ export interface PlanRow { load: string; action: string; basis: string; kw_moved
 export interface StackRow { load: string; actual_kw?: number; typical_kw?: number; extra_kw: number }
 export interface ForecastDay { hours: number[]; pred: number[]; actual?: number[]; risk: Risk; plan: PlanRow[] | null; stack_table: StackRow[] }
 export interface WhatIf { template: string; temps: number[]; guests: number[]; grid: Record<string, ForecastDay> }
-export interface Measure { site: Site; hotel: string; measure: string; category: string; inr: number; pct_of_site_bill: number; basis: string; safety: string; confidence: string }
+export interface Measure { site: Site; hotel: string; measure: string; category: string; inr: number; pct_of_site_bill: number; basis: string; safety: string; confidence: string; payback?: string | null }
+export interface SavingsTotals { group_bill: number; operations_inr: number; capital_inr: number; with_capital_inr: number; operations_pct: number; with_capital_pct: number; text: string }
 export interface OptionC { cv_rmse_hourly: number; nmbe: number; cv_rmse_monthly: number; fsu_at_8pct: number; min_verifiable_pct: number; monthly: { month: string; actual: number; baseline: number }[] }
-export interface Savings { measures: Measure[]; not_sized: string[]; option_c: Record<Site, OptionC>; group_bill: number; target: [number, number] }
+export interface Savings { measures: Measure[]; not_sized: string[]; option_c: Record<Site, OptionC>; group_bill: number; target: [number, number]; totals: SavingsTotals }
 export interface Quality {
   frozen: Record<string, number>; full: Record<string, number>; tests: { id: string; result: string; detail: string }[];
   bms: { alarms: number; precision: number; recall: number; closed_no_action: number; median_action_h: number };

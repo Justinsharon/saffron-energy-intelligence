@@ -7,26 +7,60 @@ Why both: the brief targets 8–12 % of the bill as *identified* savings, and fi
     computed with `verify()` once a measure has a go-live date and a reporting period. The data year contains no implemented measure, so no
     verified saving is reported - that would be invented.
 Data faults are never savings (T5): fault hours are excluded everywhere via `valid`.
+Two totals, always reported together: operations (every row except Capital) and with capital (+ the one capital item, pump VFDs).
+On the live year (SAFFRON_DATA=data/live) one more row is added: the daily operating plan's demand saving in months without a penalty,
+the only part of the plan not already counted by the alert and breach rows (tools/plan_savings_live.py).
 """
+import json
 import math
+import os
+import subprocess
+import sys
+from functools import lru_cache
 
 import numpy as np
 import pandas as pd
 from scipy import stats
 
 from bills import TOD, _in_window, tariff
-from features import APP, CLEAN, SITES
+from features import APP, CLEAN, DEFAULT_CLEAN, ROOT, SITES
 
 PF_TARGET = 0.99
 NIGHT_LIGHT_CUT = 0.30          # assumption: corridor / facade / landscape lighting dimmed or sensor-switched after midnight
-VFD_SHARE = 0.30                # capital note: typical saving converting constant-speed pumps to variable flow
+VFD_SHARE = 0.30                # capital: typical saving converting constant-speed pumps to variable flow
+CAPITAL = "Capital"
+LIVE_YEAR = CLEAN != DEFAULT_CLEAN
 
 
+@lru_cache(maxsize=1)
 def _chw_per_degc() -> float:
-    """Lowest metered chiller penalty per degC (5.5 vs 7.0 degC, per load band; recalibration.py) - the conservative choice."""
+    """Lowest metered chiller penalty per degC (5.5 vs 7.0 degC, per load band; recalibration.py) - the conservative choice.
+    Always fitted on the original year: the fit needs its tuning window (before 1 Apr 2026), which the live year does not have (on the live
+    frame it came back empty and the row was NaN). Like every other model, the plant's measured penalty is frozen, never refitted."""
+    import baseline
+    import detector
+    import evaluation
+    import features
     import recalibration as RC
-    pen = RC.fit(RC._frame())["chw_penalty"]
+    mods = (features, baseline, detector, evaluation, RC)
+    cur = [m.CLEAN for m in mods]
+    for m in mods:
+        m.CLEAN = DEFAULT_CLEAN
+    try:
+        pen = RC.fit(RC._frame())["chw_penalty"]
+    finally:
+        for m, c in zip(mods, cur):
+            m.CLEAN = c
     return float(pen.min() / 1.5)
+
+
+@lru_cache(maxsize=1)
+def _plan_live():
+    """Live year only: (lever table, monthly demand table, increment) of the simulated daily operating plan."""
+    sys.path.insert(0, str(ROOT / "tools"))
+    import plan_savings_live as PSL
+    levers, mon = PSL.run()
+    return levers, mon, PSL.plan_increment(mon)
 
 
 SHIFT_SHARE = {"laundry_kw": 1.0, "water_heating_kw": 0.7, "ev_chargers_kw": 0.5}   # share of peak-window kWh assumed movable
@@ -116,11 +150,18 @@ def plan() -> pd.DataFrame:
         if s == "GGN":
             sub = pd.read_parquet(CLEAN / "sub_ggn_hourly.parquet")
             pk = (sub.chw_pumps_kw + sub.cw_pumps_ct_kw).sum()
-            rows.append(dict(site=s, measure="VFDs on chilled-water and condenser pumps (constant speed today)", category="Capital (note)",
+            rows.append(dict(site=s, measure="VFDs on chilled-water and condenser pumps (constant speed today)", category=CAPITAL,
                              inr=pk * VFD_SHARE * rkwh,
                              basis=f"{pk:,.0f} kWh/yr of pump energy, flat whatever the plant load; {VFD_SHARE:.0%} typical for variable-flow conversion",
-                             safety="Set up by the chiller manufacturer to keep enough water flowing; an investment, so not counted in the total",
-                             confidence="Low (capital, typical %)"))
+                             safety="Set up by the chiller manufacturer to keep enough water flowing; an investment, so only in the with-capital total",
+                             confidence="Low (capital, typical 30 %)", payback="needs a supplier quote"))
+        if s == "GGN" and LIVE_YEAR:
+            rows.append(dict(site=s, measure="Daily operating plan: lower maximum demand in months without a penalty", category="Demand",
+                             inr=_plan_live()[2],
+                             basis="Plan simulated on the live year with the frozen models; the plan's other levers are the same waste the alerts already "
+                                   "count, so they are not added again",
+                             safety="Recommend only: the plan moves laundry, water heating and EV charging; chillers, kitchens, lifts and safety systems "
+                                    "are never cut", confidence="Medium"))
     p = pd.DataFrame(rows)
     bill = pd.read_parquet(CLEAN / "monthly_bills.parquet").groupby("site").total_energy_cost_inr.sum()
     p["pct_of_site_bill"] = p.inr / p.site.map(bill) * 100
@@ -131,8 +172,37 @@ def plan() -> pd.DataFrame:
 NOT_SIZED = [
     "Unsold-room setback via PMS: guest-room FCU/plug load already scales with rooms sold (≈0.2 kW per sold room, ~0 for unsold), so little to gain.",
     "Night base load (GGN ~330 kW 01–05 h): 8–14 % of energy is unmetered 'other'; needs a walk-through audit, not sizable from data.",
-    "Other capital measures (chiller replacement, solar, heat recovery) are out of scope; the pump VFD line is shown as a note and is not in the headline total.",
+    "Other capital measures (chiller replacement, solar, heat recovery) are out of scope; pump VFDs are the one capital item, counted only in the with-capital total.",
 ]
+
+
+def totals(p: pd.DataFrame | None = None) -> dict:
+    """The two headline totals: operations (all rows except Capital) and with capital (operations + Capital), as ₹ and % of the group bill."""
+    p = plan() if p is None else p
+    bill = float(pd.read_parquet(CLEAN / "monthly_bills.parquet").total_energy_cost_inr.sum())
+    ops = float(p.loc[p.category != CAPITAL, "inr"].sum())
+    cap = float(p.loc[p.category == CAPITAL, "inr"].sum())
+    o, w = ops / bill * 100, (ops + cap) / bill * 100
+    return dict(group_bill=bill, operations_inr=ops, capital_inr=cap, with_capital_inr=ops + cap, operations_pct=round(o, 1),
+                with_capital_pct=round(w, 1), text=f"{o:.1f}% from operations · {w:.1f}% with one capital item (pump VFDs)")
+
+
+def write_live_md(live_t: dict, orig_t: dict) -> None:
+    """data/live/savings_live.md: both totals for both years and the plan lever table."""
+    levers, mon, inc = _plan_live()
+    L = ["# Savings: original year and live year", "",
+         "The live year (Oct 2026 – Sep 2027) is **synthetic** (tools/make_live_year.py); its figures are a robustness check, not a measured result.", "",
+         "| Year | Operations | With one capital item (pump VFDs) | Headline |", "|---|---:|---:|---|"]
+    for name, t in (("Original (Oct 2025 – Sep 2026)", orig_t), ("Live (Oct 2026 – Sep 2027, synthetic)", live_t)):
+        L.append(f"| {name} | ₹{t['operations_inr']:,.0f} ({t['operations_pct']:.1f}%) | ₹{t['with_capital_inr']:,.0f} ({t['with_capital_pct']:.1f}%) | {t['text']} |")
+    L += ["", "## Daily operating plan, simulated on the live year (Gurugram)", "",
+          "| Lever | kWh | ₹ | Category | Already counted as |", "|---|---:|---:|---|---|"]
+    L += [f"| {r.lever} | {r.kwh:,.0f} | ₹{r.inr:,.0f} | {r.category} | {r.already_counted_as} |" for r in levers.itertuples()]
+    L += [f"| **Plan total** | | **₹{levers.inr.sum():,.0f}** | | |", "",
+          f"Only ₹{inc:,.0f} is added to the live-year savings (the lower-demand saving in months with no excess-demand penalty billed); the rest is the "
+          "same waste the alert and breach rows already count. Verified plan ₹ from approved steps (Plan vs actual) stays on the plan pages and the "
+          "monthly report and is never added to this headline."]
+    (CLEAN / "savings_live.md").write_text("\n".join(L) + "\n", encoding="utf-8")
 
 
 # ---- IPMVP Option C ------------------------------------------------------------------------------------------
@@ -173,13 +243,27 @@ def verify(site: str, go_live: str, actual: pd.Series | None = None) -> pd.DataF
     return m
 
 
+def original_totals() -> dict:
+    """Original-year totals from a separate process (modules bind their data folder at import)."""
+    env = {k: v for k, v in os.environ.items() if k != "SAFFRON_DATA"} | {"PYTHONIOENCODING": "utf-8"}
+    out = subprocess.run([sys.executable, __file__, "--totals"], capture_output=True, encoding="utf-8", env=env, cwd=ROOT, check=True).stdout
+    return json.loads(out.strip().splitlines()[-1])
+
+
 if __name__ == "__main__":
     p = plan()
+    if "--totals" in sys.argv:
+        print(json.dumps(totals(p)))
+        sys.exit(0)
     pd.set_option("display.width", 220, "display.max_colwidth", 70)
     print(p[["site", "category", "measure", "inr", "pct_of_site_bill"]].round(1).to_string())
-    tot = pd.read_parquet(CLEAN / "monthly_bills.parquet").total_energy_cost_inr.sum()
-    core = p[p.category != "Capital (note)"]
-    print("total ₹", round(core.inr.sum()), f"{core.inr.sum() / tot * 100:.1f}% of ₹{tot / 1e7:.2f} cr; with capital note {p.inr.sum() / tot * 100:.1f}%")
+    t = totals(p)
+    print(f"{'live' if LIVE_YEAR else 'original'} year: operations ₹{t['operations_inr']:,.0f}, with capital ₹{t['with_capital_inr']:,.0f} "
+          f"of ₹{t['group_bill'] / 1e7:.2f} cr -> {t['text']}")
     print(p.groupby("category").inr.sum())
+    if LIVE_YEAR:
+        o = original_totals()
+        write_live_md(t, o)
+        print("original year:", o["text"], "| wrote", CLEAN / "savings_live.md")
     for s in ["GGN", "JAI", "GOA"]:
         st = model_stats(s); st.pop("monthly"); print(s, {k: round(v, 2) if isinstance(v, float) else v for k, v in st.items()})

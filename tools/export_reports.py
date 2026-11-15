@@ -6,7 +6,9 @@ next month), the same rule the page uses.
 
 Plan savings follow the plan-accounting rule (src/plan_check.py): only APPROVED steps of SAVED plans count. Saved plans are read from the
 site's plans function (GET ?month=), so the report counts exactly what the team approved; days with no saved plan add ₹0 (their suggested
-plan is reported separately as "would have saved", never in a total).
+plan is reported separately as "would have saved", never in a total). Verified plan ₹ counts in that month's "found" figure next to Option C,
+never in the yearly savings headline (src/savings.py). Alert ₹ is reported in full (as in the headline); the part in hours an approved, followed
+plan step also covered (same equipment) is shown as overlap_inr and taken off "found" once, so no rupee is counted twice.
 
 The gap between savings found (plan + alerts) and the Option C total is explained, not hidden: the live year carries the generator's
 growth (tools/make_live_year.py: load x 1.012^(1 + (d - 182.5)/365), d = days since 1 Oct 2026), which the adjusted baseline (trained on the
@@ -117,9 +119,9 @@ def main():
                 plan = dict(verified_inr=round(ver), planned_inr=round(pl), missed_inr=round(miss), would_have_saved_inr=round(would),
                             approved_steps=appr, saved_days=len(saved))
 
-        # alert savings, never for hours an approved, followed plan step covered (same equipment)
+        # alert savings in full; overlap = the part in hours an approved, followed plan step covered (same equipment) - display only
         al = [x for x in alerts if x["alert_time"] <= as_of and x["start"][:7] == m and x["cost"] > 0 and x["rule"] != "PLAN_DEVIATION"]
-        a_inr = dropped = 0.0
+        a_inr = overlap = 0.0
         for x in al:
             g = RULE_GROUP.get(x["rule"]) if x["site"] == "GGN" else None
             keep = x["cost"]
@@ -128,15 +130,15 @@ def main():
                 hrs = max(1, round((t1 - t0) / pd.Timedelta(hours=1)))
                 ov = sum(1 for t in pd.date_range(t0, t1, freq="h", inclusive="left") if t.hour in covered.get(t.strftime("%Y-%m-%d"), {}).get(g, []))
                 keep = x["cost"] * (1 - ov / hrs)
-                dropped += x["cost"] - keep
-            a_inr += keep
+                overlap += x["cost"] - keep
+            a_inr += x["cost"]
 
         oc_inr = sum(v["inr"] for v in oc.values())
-        found = a_inr + (plan["verified_inr"] if plan else 0)
+        found = a_inr - overlap + (plan["verified_inr"] if plan else 0)          # the overlap is in both; count it once
         g_inr = sum(v["inr"] for v in growth.values())
         gap = None
         if m >= LIVE_START:
-            gap = dict(found_inr=round(found), option_c_inr=round(oc_inr), gap_inr=round(found - oc_inr), growth_inr=round(g_inr),
+            gap = dict(found_inr=round(found), overlap_inr=round(overlap), option_c_inr=round(oc_inr), gap_inr=round(found - oc_inr), growth_inr=round(g_inr),
                        growth_kwh=sum(v["kwh"] for v in growth.values()), rest_inr=round(found - oc_inr - g_inr))
 
         # drivers vs last month, all hotels
@@ -166,7 +168,7 @@ def main():
             bills={s: dict(this=rows[s]["billed_total"] if rows[s] else None, prev=bill(s, prev), last_year=bill(s, ly)) for s in SITES},
             option_c=dict(by_site=oc, kwh=sum(v["kwh"] for v in oc.values()), inr=round(oc_inr)),
             savings=dict(plan=plan, plan_note=None if m >= LIVE_START else "Daily plans started in Oct 2026.",
-                         alerts=dict(inr=round(a_inr), dropped_inr=round(dropped), alerts=len(al))),
+                         alerts=dict(inr=round(a_inr), overlap_inr=round(overlap), alerts=len(al))),
             gap=gap, drivers=dict(complete=have == len(SITES), prev_total=sum(bill(s, prev) or 0 for s in SITES),
                                   this_total=sum((rows[s] or {}).get("billed_total", 0) for s in SITES), steps=drivers),
             bill_check=[dict(site=s, status=rows[s]["status"], billed_minus_corrected=rows[s]["billed_minus_corrected"]) for s in SITES if rows[s]],

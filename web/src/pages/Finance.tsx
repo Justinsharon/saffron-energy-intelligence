@@ -115,9 +115,10 @@ function Rings({ items }: { items: { label: string; v: number }[] }) {
 }
 
 function SavingsBlock({ sv }: { sv: Savings }) {
-  const core = sv.measures.filter((m) => m.category !== "Capital (note)");
-  const capx = sv.measures.filter((m) => m.category === "Capital (note)");
-  const total = core.reduce((s, m) => s + m.inr, 0);
+  const lv = useData<Savings>("live_feed/savings.json");           // the same plan() on the live year, incl. the daily-plan row
+  const core = sv.measures.filter((m) => m.category !== "Capital");
+  const capx = sv.measures.filter((m) => m.category === "Capital");
+  const t = sv.totals;
   const groups = useMemo(() => {
     const g: Record<string, number> = {};
     for (const m of core) {
@@ -126,13 +127,17 @@ function SavingsBlock({ sv }: { sv: Savings }) {
     }
     let run = 0;
     const rows = Object.entries(g).sort((a, b) => b[1] - a[1]).map(([k, v]) => { const r = { k, base: run / sv.group_bill * 100, v: v / sv.group_bill * 100, inr: v }; run += v; return r; });
-    const cap = capx.reduce((s, m) => s + m.inr, 0);
-    rows.push({ k: "Pump speed controls (investment)", base: run / sv.group_bill * 100, v: cap / sv.group_bill * 100, inr: cap });
+    rows.push({ k: "Pump speed controls (investment)", base: run / sv.group_bill * 100, v: t.capital_inr / sv.group_bill * 100, inr: t.capital_inr });
     return rows;
   }, [sv]);
   return (
     <>
-      <h2>Where to save: {inr(total)} a year ({(total / sv.group_bill * 100).toFixed(1)}% of the electricity bill)</h2>
+      <h2>Where to save</h2>
+      <div className="grid g2" style={{ marginBottom: 6 }}>
+        <div className="stat"><span>Operations only</span><b>{t.operations_pct.toFixed(1)}% from operations</b><em>{inr(t.operations_inr)} a year of the electricity bill</em></div>
+        <div className="stat"><span>Operations + investment</span><b>{t.with_capital_pct.toFixed(1)}% with one capital item (pump VFDs)</b><em>{inr(t.with_capital_inr)} a year; the pump VFDs need investment</em></div>
+      </div>
+      {lv?.totals && <p className="small muted" style={{ margin: "0 0 14px" }}>Checked on the live year (Oct 2026 – Sep 2027, synthetic): {lv.totals.operations_pct.toFixed(1)}% · {lv.totals.with_capital_pct.toFixed(1)}%, including the daily plan.</p>}
       <div className="split">
         <div className="panel">
           <ResponsiveContainer width="100%" height={330}>
@@ -149,28 +154,24 @@ function SavingsBlock({ sv }: { sv: Savings }) {
               </Bar>
             </BarChart>
           </ResponsiveContainer>
-          <p className="muted small" style={{ marginBottom: 0 }}>Each step adds to the one before. Light coral is a rough estimate. Grey needs investment and is not counted in the total.</p>
+          <p className="muted small" style={{ marginBottom: 0 }}>Each step adds to the one before. Light coral is a rough estimate. Grey needs investment: it is in the with-capital total only{capx[0]?.payback ? ` (payback: ${capx[0].payback})` : ""}.</p>
         </div>
         <div className="panel">
           <h3>Getting to the 8–12% goal</h3>
           <Rings items={[
             { label: "Goal 12%", v: 0.12 * sv.group_bill },
             { label: "Goal 8%", v: 0.08 * sv.group_bill },
-            { label: `With investment ${((total + capx.reduce((a, m) => a + m.inr, 0)) / sv.group_bill * 100).toFixed(1)}%`, v: total + capx.reduce((a, m) => a + m.inr, 0) },
-            { label: `Found ${(total / sv.group_bill * 100).toFixed(1)}%`, v: total },
+            { label: `With one capital item ${t.with_capital_pct.toFixed(1)}%`, v: t.with_capital_inr },
+            { label: `From operations ${t.operations_pct.toFixed(1)}%`, v: t.operations_inr },
           ]} />
-          <p className="small" style={{ marginTop: 0 }}>Day-to-day waste is only about 3% of the bill, so fixing waste alone won't reach 8%. Most of the rest comes from how the hotels are billed: the capacitor panel and the contracted power limit. Two more steps could close the gap:</p>
-          <ul className="small" style={{ paddingLeft: 18 }}>
-            <li>A walk-through of the night-time base load at Gurugram (about 330 kW between 1 and 5 am), much of it not on a sub-meter.</li>
-            <li>Investments such as pump speed controls, with payback worked out case by case.</li>
-          </ul>
+          <p className="small" style={{ marginTop: 0 }}>Day-to-day waste is about 3% of the bill. The daily plan stops that waste before it starts, but it is the same waste, so it adds little on top. Reaching 8% needs a night base-load audit at Gurugram or more capital items.</p>
         </div>
       </div>
       <div className="panel scroll-x" style={{ marginTop: 14 }}>
         <table className="t">
           <thead><tr><th>Hotel</th><th>What to do</th><th>Kind</th><th className="r">Saves a year</th><th>How sure</th><th>Safety</th></tr></thead>
           <tbody>{[...sv.measures].sort((a, b) => b.inr - a.inr).map((m, i) => (
-            <tr key={i}><td>{m.hotel}</td><td><strong>{measureName(m.measure)}</strong><details className="more-info"><summary>How we worked it out</summary><p className="tech">{m.basis}</p></details></td>
+            <tr key={i}><td>{m.hotel}</td><td><strong>{measureName(m.measure)}</strong>{m.payback && <div className="small muted">Payback: {m.payback}</div>}<details className="more-info"><summary>How we worked it out</summary><p className="tech">{m.basis}</p></details></td>
               <td>{CATEGORY[m.category] ?? m.category}</td><td className="r">{inr(m.inr)}</td><td className="small">{CONFIDENCE(m.confidence)}</td><td className="small">{m.safety}</td></tr>
           ))}</tbody>
         </table>

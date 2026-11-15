@@ -3,7 +3,8 @@ import { SITE_NAME, SITES } from "../data";
 import { fmtMonth, inr, n } from "../format";
 import { useMonthSavings } from "../monthSavings";
 
-/** Live months: plan savings (verified), alert savings, and the Option C total, side by side - never added together twice. */
+/** Live months: plan savings (verified), alert savings, and the Option C total, side by side - never added together twice.
+ *  Plan ₹ is an operational measure: shown here, never in the yearly savings headline (the one plan row there is the simulated plan_increment). */
 export function MonthSavingsPanel({ now }: { now: string }) {
   const months: string[] = [];
   for (let d = new Date(Date.UTC(2026, 9, 1)); d.toISOString().slice(0, 7) <= now.slice(0, 7); d = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 1, 1)))
@@ -18,7 +19,7 @@ export function MonthSavingsPanel({ now }: { now: string }) {
         <select value={month} onChange={(e) => setMonth(e.target.value)} className="month-pick">{months.map((x) => <option key={x} value={x}>{fmtMonth(x)}</option>)}</select></div>
       <div className="grid g3">
         <div className="stat"><span>From acting on alerts</span><b>{m.alerts ? inr(m.alerts.inr) : "…"}</b>
-          <em>{m.alerts ? `${m.alerts.alerts} alerts in ${fmtMonth(month)}; waste caught, counted once fixed${m.alerts.dropped_inr >= 1 ? ` (${inr(m.alerts.dropped_inr)} left out: the daily plan already covered those hours)` : ""}` : "loading"}</em></div>
+          <em>{m.alerts ? `${m.alerts.alerts} alerts in ${fmtMonth(month)}; waste caught, counted once fixed${m.alerts.overlap_inr >= 1 ? `; ${inr(m.alerts.overlap_inr)} of it fell in hours an approved plan step also covered (shown for reference, counted once)` : ""}` : "loading"}</em></div>
         <div className="stat"><span>From the daily plan (verified)</span><b>{p ? inr(p.totals.verified_inr) : p === null ? "—" : "…"}</b>
           <em>{p ? `${p.totals.approved_steps} approved steps on ${p.totals.saved_days} saved ${p.totals.saved_days === 1 ? "day" : "days"}: ${inr(p.totals.planned_inr)} planned, ${inr(p.totals.missed_inr)} missed. `
             + `Suggested plans on days with no saved plan would have saved ${inr(p.totals.would_have_saved_inr)} if followed (not counted).`
@@ -34,7 +35,7 @@ export function MonthSavingsPanel({ now }: { now: string }) {
               <tr key={s}><td>{SITE_NAME[s]}</td><td className="r">{n(x.actual)} kWh</td><td className="r">{n(x.baseline)} kWh</td>
                 <td className="r">{x.kwh >= 0 ? "−" : "+"}{n(Math.abs(x.kwh))} kWh ({x.baseline ? Math.abs(x.kwh / x.baseline * 100).toFixed(1) : "0"}%)</td><td className="r">{inr(x.inr)}</td></tr>); })}</tbody>
           </table>
-          <p className="muted small" style={{ marginBottom: 0 }}>A rupee counts as a plan saving or an alert saving, never both. Option C (the IPMVP whole-building check) is the total, however it is split; the gap between the split and the total is model noise and anything not yet tied to an action. {p?.honesty}</p>
+          <p className="muted small" style={{ marginBottom: 0 }}>A rupee counts as a plan saving or an alert saving, never both. Plan savings are tracked here and in the monthly report, not added to the yearly savings figures below. Option C (the IPMVP whole-building check) is the total, however it is split; the gap between the split and the total is model noise and anything not yet tied to an action. {p?.honesty}</p>
         </div>
       )}
     </>
