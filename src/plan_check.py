@@ -192,15 +192,24 @@ def _checked(g: str) -> str:
             "water": "boost heating in the 18:00–22:00 peak", "ev": "EV-charger draw while the limit was planned"}[g]
 
 
+def _end(t: str) -> str:
+    return "midnight" if t == "00:00 (next day)" else t.replace(" (next day)", "")
+
+
+def _window(a: dict) -> str:
+    return "all day" if a["start"] == "00:00" and a["end"] == "00:00 (next day)" else f"{a['start']}–{_end(a['end'])}"
+
+
 def _title(a: dict, dev: list, meters_row) -> str:
     g, first, last = a["group"], _hm(dev[0]), _hm(dev[-1] + 1)
+    until = "all day" if a["start"] == "00:00" and a["end"] == "00:00 (next day)" else f"until {_end(a['end'])}"
     if g == "chillers":
         got = actual_stage(meters_row.chiller_ch1_kw, meters_row.chiller_ch3_kw)
-        return f"Plan said {PLANNED[stage_of(a['setting'])]} until {a['end'].replace(' (next day)', '')}; {ACTUAL[got].replace(' ran', '')} ran from {first}"
+        return f"Plan said {PLANNED[stage_of(a['setting'])]} {until}; {ACTUAL[got].replace(' ran', '')} ran from {first}"
     if g == "chw":
-        return f"Plan said chilled water {a['setting']} until {a['end'].replace(' (next day)', '')}; it was set colder from {first}"
+        return f"Plan said chilled water {a['setting']} {until}; it was set colder from {first}"
     if g == "ahu":
-        return f"Plan said banquet AHUs off at {a['end'].replace(' (next day)', '')}; they ran {first}–{last}"
+        return f"Plan said banquet AHUs off at {_end(a['end'])}; they ran {first}–{last}"
     if g == "laundry":
         return f"Plan said no laundry in the 18:00–22:00 peak; it ran from {first}"
     if g == "water":
@@ -217,7 +226,7 @@ def _alert(date, a, dev, n, extra_kwh, extra_inr, meters, day, cut, per_hour_ext
     base = [float(v) - per_hour_extra.get(int((t - day) / pd.Timedelta(hours=1)), 0.0) for t, v in zip(w.index, w.total_kwh)]
     fmt = lambda t: t.strftime("%Y-%m-%dT%H:%M")
     title = _title(a, dev, m.loc[t0])
-    ev = (f"Planned: {a['setting']} ({a['start']}–{a['end']}). The meters differ in {len(dev)} of {n} hours checked "
+    ev = (f"Planned: {a['setting']} ({_window(a)}). The meters differ in {len(dev)} of {n} hours checked "
           f"({', '.join(_hm(h) for h in dev[:8])}{'…' if len(dev) > 8 else ''}): about {extra_kwh:,.0f} kWh more than the plan")
     return dict(id=f"PD-{date}-{a['group']}-{a['start'][:2]}", site="GGN", hotel="Gurugram", rule="PLAN_DEVIATION", title=title, severity="Medium",
                 equipment=a.get("equipment", ""), start=fmt(t0), end=fmt(t1), alert_time=fmt(at), flagged_h=len(dev), duration_h=float(len(dev)),

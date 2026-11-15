@@ -8,9 +8,13 @@ import { useMonthSavings } from "../monthSavings";
 import { riskFor, type RiskCal } from "../plan";
 
 interface PlanIndex { days: Record<string, { peak_kva: number }>; risk: RiskCal }
-const addMonth = (m: string, k: number) => { const [y, mo] = m.split("-").map(Number); const d = new Date(Date.UTC(y, mo - 1 + k, 1)); return d.toISOString().slice(0, 7); };
+const addMonth = (m: string, k: number) => {
+  if (!/^\d{4}-\d{2}$/.test(m)) return "";                    // no month yet (bills still loading)
+  const [y, mo] = m.split("-").map(Number);
+  return new Date(Date.UTC(y, mo - 1 + k, 1)).toISOString().slice(0, 7);
+};
 /** When the month's bill was issued (live-year bills carry it; original-year bills are taken as the 5th of the next month). */
-const issuedOn = (r: Recon | undefined, m: string) => (r?.bill_issued ? r.bill_issued.slice(0, 10) : `${addMonth(m, 1)}-05`);
+const issuedOn = (r: Recon | undefined, m: string) => (r?.bill_issued ? r.bill_issued.slice(0, 10) : m ? `${addMonth(m, 1)}-05` : "");
 const pct = (a: number, b: number) => (b ? `${a >= b ? "+" : "−"}${Math.abs((a / b - 1) * 100).toFixed(1)}%` : "—");
 
 /** Monthly report for the general manager and the finance controller: one A4 page, built only from data available on the day the
@@ -23,7 +27,7 @@ export default function Report() {
   useEffect(() => { if (months.length && (!month || !months.includes(month))) setMonth(months.at(-1)!); }, [months.join()]);
   const m = month ?? months.at(-1) ?? "";
   const asOfDate = issuedOn(billsNow?.recon.find((r) => r.month === m), m);
-  const asOf = `${asOfDate}T09:00`;
+  const asOf = asOfDate ? `${asOfDate}T09:00` : now;
   const bills = useBillsAt(asOf);
   const changes = useChangesAt(bills);
   const alerts = useAlertsAt(asOf);
@@ -41,7 +45,7 @@ export default function Report() {
   let have = 0;
   for (const s of SITES) { const c = changes?.[`${s}|${prev}|${m}`]; if (c) { have++; for (const [k, v] of Object.entries(c.groups)) groups[k] = (groups[k] ?? 0) + v; } }
   const steps = Object.entries(groups).filter(([, v]) => Math.abs(v) >= 1).sort((a, b) => Math.abs(b[1]) - Math.abs(a[1]));
-  const top = steps.slice(0, 6), rest = steps.slice(6).reduce((x, [, v]) => x + v, 0);
+  const top = steps.slice(0, 5), rest = steps.slice(5).reduce((x, [, v]) => x + v, 0);
   const wf = [...top.map(([k, v]) => ({ label: DRIVER[k] ?? k, value: v })), ...(Math.abs(rest) >= 1 ? [{ label: "Other", value: rest }] : [])];
   // top problems in the month
   const probs = (alerts ?? []).filter((a) => a.start.slice(0, 7) === m && a.cost > 0).sort((a, b) => b.cost - a.cost).slice(0, 5);
@@ -49,8 +53,8 @@ export default function Report() {
   const nm = addMonth(m, 1);
   const watch = (() => {
     const out: { d: string; peak: number; level: string }[] = [];
-    if (idx) for (const [d, x] of Object.entries(idx.days)) if (d.startsWith(nm)) { const r = riskFor([x.peak_kva], idx.risk); out.push({ d, peak: r.peak, level: r.level }); }
-    if (!out.length && past) for (const [d, f] of Object.entries(past)) if (d.startsWith(nm)) out.push({ d, peak: f.risk.peak, level: f.risk.level });
+    if (idx) for (const [d, x] of Object.entries(idx.days)) if (d.startsWith(nm) && d > asOfDate) { const r = riskFor([x.peak_kva], idx.risk); out.push({ d, peak: r.peak, level: r.level }); }
+    if (!out.length && past) for (const [d, f] of Object.entries(past)) if (d.startsWith(nm) && d > asOfDate) out.push({ d, peak: f.risk.peak, level: f.risk.level });
     return out.sort((a, b) => b.peak - a.peak).slice(0, 4);
   })();
   const p = sav.plan;
