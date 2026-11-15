@@ -64,3 +64,13 @@ export function view(date: string, entry: Entry | undefined, storage: PlanView["
   }
   return { date, storage, plan, decisions, edits, log: entry?.log ?? [] };
 }
+
+/** The saved plan as it should be checked against the meters: edited times applied, and each step's latest approve / skip attached
+ *  (a skipped step is a recorded decision, not a deviation). */
+export function checkActions(v: PlanView): (SavedAction & { decision?: string; decision_reason?: string })[] {
+  if (!v.plan) return [];
+  return v.plan.actions.map((a) => {
+    const ed = v.edits[a.id], d = v.decisions[a.id];
+    return { ...a, start: ed?.start ?? a.start, end: ed?.end ?? a.end, decision: d?.event, decision_reason: d?.reason };
+  });
+}

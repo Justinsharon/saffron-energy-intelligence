@@ -90,7 +90,7 @@ export const BILL_STATUS: Record<string, { label: string; tone: "ok" | "dq" | "h
 
 export const DRIVER: Record<string, string> = {
   Weather: "Weather", Occupancy: "Guests in house", Events: "Events", Calendar: "Days in the month", Anomalies: "Waste and faults",
-  Demand: "Peak-demand charges", Diesel: "Diesel generator", "Tariff mix": "Time-of-day pricing", Unexplained: "Not explained",
+  Demand: "Peak-demand charges", Diesel: "Diesel generator", "Tariff mix": "Time-of-day pricing", "Tariff rates": "New tariff rates", Unexplained: "Not explained",
 };
 
 /** Savings measures grouped and named for a hotel manager. */

@@ -7,6 +7,7 @@ import Finance from "./pages/Finance";
 import Ask from "./pages/Ask";
 import Rate from "./pages/Rate";
 import Method from "./pages/Method";
+import Report from "./pages/Report";
 import { DATA_FIRST, fmtDT, istNow } from "./format";
 
 const I = (d: string) => <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden><path d={d} /></svg>;
@@ -35,6 +36,7 @@ export const PAGES = [
 ] as const;
 const MORE = [
   { id: "feedback", label: "Alert feedback" },
+  { id: "report", label: "Monthly report" },
   { id: "accuracy", label: "How accurate is it?" },
 ] as const;
 type PageId = (typeof PAGES)[number]["id"] | (typeof MORE)[number]["id"];
@@ -122,6 +124,7 @@ export default function App() {
             {page === "ask" && <Ask />}
             {page === "feedback" && <Rate />}
             {page === "accuracy" && <Method />}
+            {page === "report" && <Report />}
           </main>
           <footer className="foot">
             <span>Live date and weather. Meter readings from 1 Oct 2026 are a live feed from simulated meters, shown up to the current hour; Oct 2025 – Sep 2026 is the original sample year. Tariff rates are illustrative. Every change is recommended, never made automatically.</span>

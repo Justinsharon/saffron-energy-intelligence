@@ -58,3 +58,39 @@ export async function getPlan(req: PlanRequest, offline: { day: PlanDay | null; 
     return offlinePlan(offline.day, req, offline.temps, offline.cal, why);
   }
 }
+
+// ---- plan vs actual and plan savings (API only: the sub-meter readings are not shipped to the browser) ----
+import type { Alert } from "./data";
+
+export interface CheckStep {
+  id: string; group: string; start: string; end: string; setting: string; equipment: string; status: string; reason?: string;
+  hours_checked: number; hours_differed: string[]; extra_kwh: number; extra_inr: number; planned_inr: number; verified_inr: number; what_was_checked: string;
+}
+export interface CheckSummary { steps: number; due: number; followed: number; partly: number; not_followed: number; not_yet_due: number; cant_tell: number;
+  skipped?: number; planned_inr: number; verified_inr: number; missed_inr: number }
+export interface CheckResult { date: string; as_of: string; source: string; honesty: string; notes: string[]; steps: CheckStep[]; alerts: Alert[];
+  covered: Record<string, number[]>; summary: CheckSummary }
+export interface SavingsDay { date: string; source: string; planned_inr: number; verified_inr: number; missed_inr: number; followed: number; partly: number;
+  not_followed: number; due: number; steps: number; covered: Record<string, number[]>; deviations: number }
+export interface SavingsResult { month: string; as_of: string; honesty: string; days: SavingsDay[]; method: string;
+  totals: { planned_inr: number; verified_inr: number; missed_inr: number; days: number; saved_days: number } }
+
+async function post<T>(path: string, body: unknown, timeoutMs: number): Promise<T | null> {
+  const ctrl = new AbortController();
+  const t = setTimeout(() => ctrl.abort(), timeoutMs);
+  try {
+    const r = await fetch(`/api/${path}`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body), signal: ctrl.signal });
+    if (!r.ok || !(r.headers.get("content-type") ?? "").includes("json")) return null;
+    return (await r.json()) as T;
+  } catch { return null; } finally { clearTimeout(t); }
+}
+
+/** Plan vs actual for a day, up to `asOf` (the server never goes past the current IST hour). actions: the saved plan's steps
+ *  (checkActions) or the suggested plan shown on the page (planSource "suggested"); omitted = the API's own suggested plan. */
+export function checkPlan(date: string, asOf: string, actions?: unknown[], planSource?: "saved" | "suggested") {
+  return post<CheckResult>("check", { date, as_of: asOf, actions, plan_source: planSource }, 8000);
+}
+/** Planned vs verified plan ₹ for a month, day by day up to `asOf`; saved: {date: steps} for days with a saved plan. */
+export function monthSavings(month: string, asOf: string, saved: Record<string, unknown[]> = {}) {
+  return post<SavingsResult>("savings", { month, as_of: asOf, saved }, 20000);
+}

@@ -6,6 +6,8 @@ import { ICON } from "../App";
 import { SITES, SITE_NAME, useData, type Alert, type ForecastDay, type Hotel, type Site } from "../data";
 import { useFeeds } from "../feed";
 import { TodayPlanCard } from "../components/TodayPlan";
+import { useDayCheck } from "../dayCheck";
+import { visibleAlerts } from "../feedcore";
 import type { Feed } from "../feedcore";
 import { fmtD, fmtDT, inr, n, parse, iso } from "../format";
 import { pickCell, useLiveDay, useWeather } from "../live";
@@ -88,7 +90,14 @@ export default function Shift() {
   const shown = now;
   const wx = useWeather();
   const feeds = useFeeds(now, live);
-  const alerts = useMemo(() => feeds ? SITES.flatMap((s) => feeds.feeds[s].recent_alerts) : null, [feeds]);
+  const dc = useDayCheck(now);
+  // the feed's alerts, plus Gurugram plan deviations (a step of the day's plan not followed for 2+ hours), cut at the hour shown
+  const alerts = useMemo(() => {
+    if (!feeds) return null;
+    const dayAgo = iso(new Date(parse(now).getTime() - 864e5));
+    const dev = visibleAlerts(dc?.check?.alerts ?? [], now).filter((a) => a.ongoing || a.end > dayAgo);
+    return [...SITES.flatMap((s) => feeds.feeds[s].recent_alerts), ...dev];
+  }, [feeds, dc, now]);
   const days = useData<Record<string, ForecastDay>>("forecast_days.json");
   const [site, setSite] = useState<Site | "ALL">("ALL");
   const [acks, setAcks] = useState<Record<string, Ack>>(loadAcks);
@@ -146,7 +155,7 @@ export default function Shift() {
         </div>
       ))}
 
-      {(site === "ALL" || site === "GGN") && <TodayPlanCard now={now} onPlan={() => go("demand")} />}
+      {(site === "ALL" || site === "GGN") && <TodayPlanCard now={now} dc={dc} onPlan={() => go("demand")} />}
 
       <div className="section-title" id="attention">
         <h2>Needs attention{site !== "ALL" ? ` at ${SITE_NAME[site]}` : ""}</h2>

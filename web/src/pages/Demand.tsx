@@ -8,8 +8,8 @@ import { useFeeds } from "../feed";
 import { addMs, DAY_MS, fmtD, inr, istNow, n, parse } from "../format";
 import { LOAD } from "../copy";
 import { actionId, hh, TAG, type Booking, type Hall, type PlanDay, type RiskCal } from "../plan";
-import { getPlan, type PlanResult } from "../planApi";
-import type { PlanView, SavedAction } from "../planlog";
+import { checkPlan, getPlan, type CheckResult, type CheckStep, type PlanResult } from "../planApi";
+import { checkActions, type PlanView, type SavedAction } from "../planlog";
 import { loadPlan, plannerName, postPlan, setPlannerName } from "../planStore";
 
 const HEAD: Record<string, string> = {
@@ -109,8 +109,23 @@ function BookingRow({ b, onChange, onRemove }: { b: Booking; onChange: (b: Booki
 }
 
 /** One timed action with Approve / Skip with a reason / Edit time. */
-function Step({ a, edit, decision, canDecide, busy, onDecide }: {
-  a: SavedAction; edit?: PlanView["edits"][string]; decision?: PlanView["decisions"][string]; canDecide: boolean; busy: boolean;
+const BADGE: Record<string, string> = { Followed: "c-ok", Partly: "c-med", "Not followed": "c-high", "Not yet due": "c-low", Skipped: "c-low", "Can't tell (no meter)": "c-dq" };
+
+/** Plan vs actual for one step: badge, hours that differed, ₹ verified or missed. */
+function CheckLine({ c }: { c: CheckStep }) {
+  const money = c.status === "Followed" || c.status === "Partly" ? (c.verified_inr >= 1 ? ` · ${inr(c.verified_inr)} saved so far` : "") : "";
+  const miss = c.extra_inr >= 1 ? ` · ${inr(c.extra_inr)} missed` : c.extra_kwh >= 1 ? ` · ${n(c.extra_kwh)} kWh more than planned` : "";
+  return (
+    <div className="check-line">
+      <span className={`chip ${BADGE[c.status] ?? "c-low"}`}>{c.status}</span>
+      <span className="small">{c.status === "Not yet due" ? "Not reached yet." : c.status === "Skipped" ? `Skipped by the team${c.reason ? `: ${c.reason}` : ""}.`
+        : `Checked ${c.hours_checked} h: ${c.what_was_checked}.`}{c.hours_differed.length ? ` Differed at ${c.hours_differed.slice(0, 6).join(", ")}${c.hours_differed.length > 6 ? "…" : ""}.` : ""}{money}{miss}</span>
+    </div>
+  );
+}
+
+function Step({ a, edit, decision, canDecide, busy, onDecide, chk }: {
+  a: SavedAction; edit?: PlanView["edits"][string]; decision?: PlanView["decisions"][string]; canDecide: boolean; busy: boolean; chk?: CheckStep;
   onDecide: (ev: "approve" | "skip" | "edit", extra?: Record<string, string>) => void;
 }) {
   const [mode, setMode] = useState<"" | "skip" | "edit">("");
@@ -130,6 +145,7 @@ function Step({ a, edit, decision, canDecide, busy, onDecide }: {
         <p className="why">{a.reason}</p>
         {edit && <p className="small" style={{ margin: "0 0 8px", color: "var(--coral)" }}>Time changed from {a.start}–{a.end} to {start}–{end} by {edit.by} at {edit.at.slice(11)}{edit.reason ? `: ${edit.reason}` : ""}.</p>}
         <div className="guard small"><span aria-hidden>🛡</span><span>{a.guardrail}</span></div>
+        {chk && <CheckLine c={chk} />}
         {decision && <div className={`small status ${state}`}>{decision.event === "approve" ? `Approved by ${decision.by} at ${decision.at.slice(11)}` : `Skipped by ${decision.by} at ${decision.at.slice(11)}: ${decision.reason}`}</div>}
         {canDecide && (
           <div className="btn-row" style={{ marginTop: 8 }}>
@@ -156,11 +172,18 @@ function Step({ a, edit, decision, canDecide, busy, onDecide }: {
   );
 }
 
+const LIVE_FIRST = "2026-10-02";            // first live-year day with a plan (look back)
+
 function TomorrowPlan() {
-  const today = istNow().slice(0, 10);
+  const { now: clockNow, live } = useClock();
+  const realToday = istNow().slice(0, 10);
+  const today = live ? realToday : clockNow.slice(0, 10);        // looking back: plan and check that day
   const tomorrow = addDays(today, 1);
   const idx = useData<PlanIndex>("plan/index.json");
-  const [date, setDate] = useState(tomorrow);
+  const [date, setDate] = useState(live ? tomorrow : today);
+  useEffect(() => setDate(live ? tomorrow : today), [live, today]);
+  const asOf = live ? istNow() : clockNow;
+  const past = date <= today;
   const day = usePlanDay(date);
   const wx = useWeather();
   const feeds = useFeeds(istNow(), true);
@@ -170,7 +193,7 @@ function TomorrowPlan() {
   const [saved, setSaved] = useState<PlanView | null>(null);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
-  const last = useMemo(() => { const ds = Object.keys(idx?.days ?? {}).filter((d) => d >= tomorrow).sort(); return ds[Math.min(13, ds.length - 1)] ?? addDays(tomorrow, 13); }, [idx, tomorrow]);
+  const last = useMemo(() => { const ds = Object.keys(idx?.days ?? {}).filter((d) => d >= addDays(realToday, 1)).sort(); return ds[Math.min(13, ds.length - 1)] ?? addDays(realToday, 14); }, [idx, realToday]);
 
   // a saved plan for the date pre-fills the form; otherwise the day's suggested values
   useEffect(() => {
@@ -206,6 +229,20 @@ function TomorrowPlan() {
   useEffect(() => setRes(null), [date]);
   const actions: SavedAction[] = useMemo(() => (res ? res.actions.map((a) => ({ ...a, id: actionId(a) })) : []), [res]);
   const risk = res?.risk ?? null;
+
+  // plan vs actual: today or a past day - the saved plan (edited times, decisions) or, if none was saved, the suggested plan shown
+  const [chk, setChk] = useState<CheckResult | null | undefined>(undefined);
+  const savedSig = saved?.plan ? `${saved.plan.n}|${saved.log.length}` : "";
+  const shownSig = actions.map((a) => a.id + a.setting).join(";");
+  useEffect(() => {
+    setChk(undefined);
+    if (!past || !res) return;
+    let on = true;
+    const acts = saved?.plan ? checkActions(saved) : actions;
+    checkPlan(date, asOf.slice(0, 13) + ":00", acts, saved?.plan ? "saved" : "suggested").then((r) => on && setChk(r));
+    return () => { on = false; };
+  }, [past, date, savedSig, saved?.plan ? "" : shownSig, asOf.slice(0, 13)]);
+  const chkBy = useMemo(() => Object.fromEntries((chk?.steps ?? []).map((x) => [x.id, x])), [chk]);
   const sig = (xs: { id: string; setting: string; end: string }[]) => xs.map((a) => `${a.id}=${a.setting}@${a.end}`).join(";");
   const dirty = !saved?.plan || sig(saved.plan.actions) !== sig(actions);
   const approved = actions.filter((a) => saved?.decisions[a.id]?.event === "approve").length;
@@ -231,14 +268,15 @@ function TomorrowPlan() {
     <>
       <div className="page-head">
         <div>
-          <h1>Tomorrow's plan, Gurugram</h1>
-          <p className="lead">Enter tomorrow's bookings. The forecast and the operating plan update as you type. Each step is a recommendation: approve it, skip it with a reason, or change its time. Nothing is switched automatically, and every decision is logged.</p>
+          <h1>{past ? `Plan vs actual, ${date === today ? "today" : fmtD(date)}` : "Tomorrow's plan"}, Gurugram</h1>
+          <p className="lead">{past ? "Each step of the day's plan, checked against the meters up to " + (live ? "now" : "the hour you are looking back at") + ". Followed steps count as verified savings; steps not followed show what they cost."
+            : "Enter tomorrow's bookings. The forecast and the operating plan update as you type. Each step is a recommendation: approve it, skip it with a reason, or change its time. Nothing is switched automatically, and every decision is logged."}</p>
           {g && g.peak_kva != null && <span className="feed-note">Today so far: peak {n(g.peak_kva)} kVA at {String(g.peak_hour).padStart(2, "0")}:00 (live feed, simulated meters)</span>}
         </div>
         <label className="field" style={{ minWidth: 200 }}>
           <span className="small muted">Plan for</span>
-          <input type="date" min={tomorrow} max={last} value={date} onChange={(e) => e.target.value && setDate(e.target.value)} />
-          <span className="hint">{date === tomorrow ? "tomorrow" : `${Math.round((parse(date).getTime() - parse(today).getTime()) / DAY_MS)} days ahead`}</span>
+          <input type="date" min={LIVE_FIRST} max={live ? last : today} value={date} onChange={(e) => e.target.value && setDate(e.target.value)} />
+          <span className="hint">{date === tomorrow ? "tomorrow" : date === today ? "today: plan vs actual so far" : date < today ? "past day: plan vs actual" : `${Math.round((parse(date).getTime() - parse(today).getTime()) / DAY_MS)} days ahead`}</span>
         </label>
       </div>
 
@@ -274,6 +312,9 @@ function TomorrowPlan() {
                 {planning && <span className="small muted" style={{ fontWeight: 500, marginLeft: 8 }}>updating…</span>}</h2>
               <p className="small muted" style={{ margin: "4px 0 0" }}><strong className="plan-total">{inr(res.total_inr)}</strong> planned saving vs how last year ran on similar days · <strong>{approved} of {actions.length}</strong> approved
                 {saved?.plan && <> · saved by {saved.plan.by} at {saved.plan.at.slice(11)}{saved.storage === "device" ? " (this device only: shared storage is not set up)" : ""}</>}</p>
+              {past && chk && <p className="small" style={{ margin: "4px 0 0" }}><strong>{chk.summary.followed} of {chk.summary.due} due steps followed</strong>
+                {chk.summary.not_followed ? `, ${chk.summary.not_followed} not followed` : ""} · <strong style={{ color: "var(--green)" }}>{inr(chk.summary.verified_inr)} saved</strong> / <strong style={{ color: "var(--coral)" }}>{inr(chk.summary.missed_inr)} missed</strong> so far (to {chk.as_of.slice(11, 16)}{chk.as_of.slice(0, 10) !== date ? ` on ${chk.as_of.slice(8, 10)}/${chk.as_of.slice(5, 7)}` : ""})</p>}
+              {past && chk === null && <p className="small muted" style={{ margin: "4px 0 0" }}>The plan check needs the planning service, which did not answer. Try again in a minute.</p>}
             </div>
             <div className="btn-row" style={{ alignItems: "center" }}>
               <input className="name" value={name} onChange={(e) => setName(e.target.value)} onBlur={() => name.trim() && setPlannerName(name)} placeholder="Your name" aria-label="Your name" />
@@ -286,12 +327,13 @@ function TomorrowPlan() {
               <ul>{res.notes.map((x, i) => <li key={i}>{x}</li>)}</ul>
             </div>
           )}
+          {past && chk && <div className="guard note-warn" style={{ marginBottom: 10 }}><span aria-hidden>ⓘ</span><span>{chk.honesty} {chk.source !== "saved plan" ? "No plan was saved for this day, so the suggested plan is checked." : ""}</span></div>}
           {err && <div className="guard note-warn" style={{ marginBottom: 10 }}><span aria-hidden>⚠</span><span>{err}</span></div>}
           {saved?.plan && dirty && <p className="small" style={{ color: "var(--coral)", marginTop: 0 }}>The plan has changed since it was saved. Approving a step saves the new version first.</p>}
           <ol className="timeline">
             {actions.map((a) => (
               <Step key={a.id + (saved?.plan?.n ?? 0)} a={a} edit={saved?.edits[a.id]} decision={dirty ? undefined : saved?.decisions[a.id]} canDecide={!!name.trim()} busy={busy}
-                    onDecide={(ev, x) => decide(a, ev, x)} />
+                    onDecide={(ev, x) => decide(a, ev, x)} chk={past ? chkBy[a.id] : undefined} />
             ))}
           </ol>
           {!name.trim() && <p className="small muted">Enter your name above to approve, skip or change steps. It is kept on this device.</p>}
@@ -372,6 +414,7 @@ function PastForecast() {
 }
 
 export default function Demand() {
-  const { live } = useClock();
-  return live ? <TomorrowPlan /> : <PastForecast />;
+  const { live, now } = useClock();
+  // the original year has past day-ahead forecasts; the live year has saved / suggested plans to check
+  return live || now >= "2026-10-02" ? <TomorrowPlan /> : <PastForecast />;
 }

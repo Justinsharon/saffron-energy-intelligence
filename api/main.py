@@ -14,6 +14,7 @@ less certain; aliases (rooms_occupied, guests_in_house, restaurant_covers) are a
 typical weather for that date.
 """
 import json
+import re
 import time
 import urllib.request
 from datetime import datetime, timedelta, timezone
@@ -25,6 +26,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
 import operating_plan as OP
+import plan_check as PC
 from plan_models import HALL_EVENT, add_bookings, booking_hours, predict
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -33,6 +35,7 @@ MODELS = joblib.load(M / "plan_models.joblib")
 CTX = pd.read_parquet(M / "context.parquet")
 REFS = json.loads((M / "refs.json").read_text(encoding="utf-8"))
 META = json.loads((M / "meta.json").read_text(encoding="utf-8"))
+LIVE = pd.read_parquet(M / "live_meters.parquet")             # simulated live-year meters; every read is cut at the current IST hour
 IST = timezone(timedelta(hours=5, minutes=30))
 GGN = (28.46, 77.03)
 
@@ -191,36 +194,47 @@ def read_bookings(raw, rng: dict, notes: list) -> list:
     return [dict(hall=b["hall"], start=b["start"], end=b["end"], guests=b["guests"]) for b in items]
 
 
-@app.post("/plan")
-async def plan(req: Request):
-    t0 = time.perf_counter()
-    notes: list[str] = []
+async def _read_body(req: Request, notes: list) -> dict:
     try:
         body = await req.json()
     except Exception:
         body = None
     if body is None:
-        body = {}
         notes.append("The request had no readable JSON body; everything below comes from the usual pattern.")
+        return {}
     if not isinstance(body, dict):
         notes.append("The request body must be a JSON object; it was ignored.")
-        body = {}
+        return {}
+    return body
+
+
+@app.post("/plan")
+async def plan(req: Request):
+    notes: list[str] = []
+    body = await _read_body(req, notes)
+    status, out = compute_plan(body, notes)
+    return out if status == 200 else JSONResponse(out, status_code=status)
+
+
+def compute_plan(body: dict, notes: list) -> tuple[int, dict]:
+    """The plan for one date from the request body (also used by /check for the suggested plan). Returns (HTTP status, payload)."""
+    t0 = time.perf_counter()
     body = _fold(body, FIELDS, ALIASES, "", notes)
 
     site = str(body.get("site") or "GGN").strip().upper()
     if site in SITE_LATER:
-        return JSONResponse({"error": LATER_MSG, "site": site, "notes": notes}, status_code=422)
+        return 422, {"error": LATER_MSG, "site": site, "notes": notes}
     if site not in SITE_OK:
-        return JSONResponse({"error": f"Unknown site '{body.get('site')}'. {LATER_MSG}", "notes": notes}, status_code=422)
+        return 422, {"error": f"Unknown site '{body.get('site')}'. {LATER_MSG}", "notes": notes}
 
     today = datetime.now(IST).date()
     date = str(body.get("date") or (today + timedelta(days=1)).isoformat()).strip()
     try:
         day = pd.Timestamp(datetime.strptime(date, "%Y-%m-%d"))
     except ValueError:
-        return JSONResponse({"error": f"date '{date}' must be YYYY-MM-DD.", "notes": notes}, status_code=422)
+        return 422, {"error": f"date '{date}' must be YYYY-MM-DD.", "notes": notes}
     if date not in REFS:
-        return JSONResponse({"error": f"No plan context for {date}. Dates covered: {META['dates'][0]} to {META['dates'][1]}.", "notes": notes}, status_code=422)
+        return 422, {"error": f"No plan context for {date}. Dates covered: {META['dates'][0]} to {META['dates'][1]}.", "notes": notes}
     ahead = (day.date() - today).days
     if ahead < 0:
         notes.append(f"{date} is in the past: this is a look-back forecast (what the models expect for that day with these inputs), not the meter "
@@ -297,7 +311,7 @@ async def plan(req: Request):
     acts = OP.plan_day(tr, kva, temp, bookings, META["pf"], ref, META["tariff"])
     risk = OP.risk_for(kva, META["risk"])
     r1 = lambda xs: [round(x, 1) for x in xs]
-    return {
+    return 200, {
         "date": date, "site": "GGN", "recommend_only": True,
         "inputs_used": dict(used, bookings=bookings, weather=source),
         "notes": notes,
@@ -308,3 +322,81 @@ async def plan(req: Request):
         "models": dict(trained_on=META["trained_on"], context=META["context"]),
         "ms": round((time.perf_counter() - t0) * 1000),
     }
+
+
+# ---- plan vs actual (src/plan_check.py): live meters cut at the current IST hour; never later ---------------------------------------
+_CHECK: dict = {}                                            # finished days don't change: cache their check by (date, plan)
+
+
+def _as_of(raw) -> str:
+    now = datetime.now(IST).strftime("%Y-%m-%dT%H:%M")
+    a = str(raw or "")[:16]
+    return a if re.fullmatch(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}", a) and a < now else now      # look back is allowed; ahead is not
+
+
+def _check(date: str, actions: list | None, as_of: str) -> tuple[int, dict]:
+    notes: list[str] = []
+    source = "saved plan"
+    if not actions:
+        st, p = compute_plan({"date": date}, [])
+        if st != 200:
+            return st, p
+        actions, source = p["actions"], "suggested plan (no plan was saved for this day: usual pattern, no bookings)"
+        notes.append("No plan was saved for this day, so the suggested plan (usual pattern, no bookings) is checked.")
+    if date > as_of[:10]:
+        return 200, dict(date=date, as_of=as_of, source=source, notes=notes + ["This day has not started yet; nothing to check."],
+                         honesty=PC.HONESTY, steps=[], alerts=[], covered={}, summary=dict(steps=len(actions), due=0, followed=0, partly=0,
+                         not_followed=0, not_yet_due=len(actions), cant_tell=0, planned_inr=round(sum(a.get("saving_inr", 0) for a in actions), 1),
+                         verified_inr=0.0, missed_inr=0.0))
+    final = as_of[:10] > (pd.Timestamp(date) + pd.Timedelta(days=1)).strftime("%Y-%m-%d")      # next day over too: water heating window done
+    key = (date, json.dumps(actions, sort_keys=True), "final" if final else as_of[:13])
+    if key not in _CHECK:
+        ref = dict(REFS[date], curve=META["curve"], ahu_overrun_kwh=META["ahu_overrun_kwh"], chw_pct_per_c=META.get("chw_pct_per_c"))
+        _CHECK[key] = PC.check_day(date, actions, PC.meters_for(LIVE, date), as_of, ref, META["tariff"], META["pf"])
+    out = dict(_CHECK[key], source=source, notes=notes)
+    return 200, out
+
+
+@app.post("/check")
+async def check(req: Request):
+    """Plan vs actual for one date: {date, as_of?, actions? (the saved plan's steps; omitted = the suggested plan)}."""
+    notes: list[str] = []
+    b = await _read_body(req, notes)
+    date = str(b.get("date") or datetime.now(IST).date().isoformat())
+    if date not in REFS:
+        return JSONResponse({"error": f"No plan context for {date}. Dates covered: {META['dates'][0]} to {META['dates'][1]}."}, status_code=422)
+    acts = b.get("actions") if isinstance(b.get("actions"), list) else None
+    st, out = _check(date, acts, _as_of(b.get("as_of")))
+    if st == 200 and acts and b.get("plan_source") == "suggested":       # the page sends the suggested plan it shows
+        out = dict(out, source="suggested plan (no plan was saved for this day)")
+        out["notes"] = ["No plan was saved for this day, so the suggested plan shown is checked."] + out["notes"]
+    if st == 200:
+        out["notes"] = notes + out["notes"]
+    return out if st == 200 else JSONResponse(out, status_code=st)
+
+
+@app.post("/savings")
+async def savings(req: Request):
+    """Plan savings for a month, day by day, up to now: {month: YYYY-MM, as_of?, saved?: {date: actions}}. Planned vs verified ₹ (plan only;
+    alert ₹ are a separate stream) and the hours each followed step covers, so the alert side can avoid counting them twice."""
+    notes: list[str] = []
+    b = await _read_body(req, notes)
+    as_of = _as_of(b.get("as_of"))
+    month = str(b.get("month") or as_of[:7])
+    saved = b.get("saved") if isinstance(b.get("saved"), dict) else {}
+    days = [d for d in sorted(REFS) if d.startswith(month) and d <= as_of[:10]]
+    if not days:
+        return JSONResponse({"error": f"No live-year days to check for {month} up to {as_of[:10]}."}, status_code=422)
+    rows = []
+    for d in days:
+        st, c = _check(d, saved.get(d) or None, as_of)
+        if st != 200:
+            continue
+        rows.append(dict(date=d, source="saved" if saved.get(d) else "suggested", **{k: c["summary"][k] for k in ("planned_inr", "verified_inr", "missed_inr",
+                         "followed", "partly", "not_followed", "due", "steps")}, covered=c["covered"], deviations=len(c["alerts"])))
+    tot = lambda k: round(sum(r[k] for r in rows), 1)
+    return dict(month=month, as_of=as_of, honesty=PC.HONESTY, days=rows, notes=notes,
+                totals=dict(planned_inr=tot("planned_inr"), verified_inr=tot("verified_inr"), missed_inr=tot("missed_inr"), days=len(rows),
+                            saved_days=sum(1 for r in rows if r["source"] == "saved")),
+                method="Verified = followed steps only, actual meters vs how matched days ran last year (same month, day type, cooling load), "
+                       "at the plan's tariff prices; never added to alert savings for the same hours.")

@@ -6,6 +6,7 @@ import { SITES, SITE_NAME, useBillsAt, useData, type Recon, type Savings, type S
 import { fmtMonth, inr, n } from "../format";
 import { SiteSwitch } from "./Shift";
 import { CATEGORY, CONFIDENCE, measureGroup, measureName } from "../copy";
+import { MonthSavingsPanel } from "../components/MonthSavingsPanel";
 
 const LINES: [string, string][] = [
   ["bill_energy_charge_inr", "Energy"], ["bill_tod_net_inr", "Time-of-day adjustment"], ["bill_demand_charge_inr", "Peak-demand charge"],
@@ -84,6 +85,7 @@ export default function Finance() {
         </div>
       )}
 
+      {now >= "2026-10-02" && <MonthSavingsPanel now={now} />}
       {sv && <SavingsBlock sv={sv} />}
       {sv && <OptionC sv={sv} />}
     </>

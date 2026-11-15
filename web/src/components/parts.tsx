@@ -10,7 +10,7 @@ const TAG: Record<string, [string, string]> = {
   LIGHTING_LEFT_ON: ["LTG", "Event lighting"], LAUNDRY_IN_PEAK: ["LDY", "Laundry"], POOL_PUMP_OFF_SCHEDULE: ["PP", "Pool pumps"],
   POWER_FACTOR_DROP: ["APFC", "Capacitor panel"], CHILLER_STAGING_LOW_LOAD: ["CH-1/3", "Chiller plant"], STAGING_KWTR: ["CH-1/3", "Chiller plant"],
   CHILLER_PART_LOAD_INEFFICIENCY: ["CH-A/B", "Chillers"], CHW_SETPOINT_LOW: ["CHW-SP", "Chilled water"], DEMAND_NEAR_CONTRACT: ["MAIN", "Main supply"],
-  EV_CHARGER_NIGHT_ON: ["EVC", "EV chargers"], RESIDUAL_UNEXPLAINED: ["MAIN", "Whole hotel"],
+  EV_CHARGER_NIGHT_ON: ["EVC", "EV chargers"], RESIDUAL_UNEXPLAINED: ["MAIN", "Whole hotel"], PLAN_DEVIATION: ["PLAN", "Daily plan"],
 };
 export function TagPlate({ rule, severity, site }: { rule: string; severity: string; site: string }) {
   const [code, where] = TAG[rule] ?? ["EQ", "Equipment"];
@@ -36,7 +36,7 @@ const SIGNAL_LABEL: Record<string, string> = {
   kitchen_exhaust_kw: "Kitchen extract fans (kW)", lighting_kw: "Lighting (kW)", laundry_kw: "Laundry (kW)", pool_pump_kw: "Pool pumps (kW)",
   pf: "Power factor (1.0 is ideal)", chillers_kw: "Chillers (kW)", chiller_load_tr: "Cooling delivered (tons)",
   n_chillers: "Chillers shown running", kw_per_tr: "Chiller power per ton of cooling (lower is better)", chw_setpoint_c: "Chilled-water temperature setting (°C)",
-  kva_max_in_hour: "Peak power demand (kVA)", ev_chargers_kw: "EV chargers (kW)",
+  kva_max_in_hour: "Peak power demand (kVA)", ev_chargers_kw: "EV chargers (kW)", water_heating_kw: "Water heating (kW)",
 };
 const SIG_COLORS = ["#e2a04a", "#7d64a8", "#3f8a62"];
 

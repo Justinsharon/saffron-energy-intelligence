@@ -20,7 +20,7 @@ For each date from today (IST) for the next 60 days:
 index.json also carries the peak-risk calibration of src/peak_risk.py (bias, 90 % upper factor, earlier days' actual/forecast ratios,
 stacking increment), so the browser applies the same risk logic to the plan's own forecast.
 
-Run: uv run python tools/export_plan_inputs.py [first_date] [days]     (needs data/live; about a minute)
+Run: uv run python tools/export_plan_inputs.py [first_date] [days]   (default: 2 Oct 2026 - the first live-year day - to 60 days ahead)     (needs data/live; about a minute)
 """
 import json
 import sys
@@ -249,5 +249,7 @@ def main(first: date, n: int):
 
 if __name__ == "__main__":
     today = (datetime.now(timezone.utc) + timedelta(hours=5.5)).date()
-    first = date.fromisoformat(sys.argv[1]) if len(sys.argv) > 1 else today
-    main(first, int(sys.argv[2]) if len(sys.argv) > 2 else 60)
+    # default: every live-year day so far (look back, plan vs actual) through 60 days ahead
+    first = date.fromisoformat(sys.argv[1]) if len(sys.argv) > 1 else date(2026, 10, 2)
+    n = int(sys.argv[2]) if len(sys.argv) > 2 else (today - first).days + 60
+    main(first, n)

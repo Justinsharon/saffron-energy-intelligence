@@ -59,9 +59,9 @@ def _counterfactual(dB: pd.DataFrame, dA: pd.DataFrame, take_from_a: set) -> pd.
     return x
 
 
-def _alert_kwh(site: str, month: str) -> pd.DataFrame:
+def _alert_kwh(site: str, month: str, alerts: pd.DataFrame | None = None) -> pd.DataFrame:
     """Detector-flagged excess kWh falling in the month (pro-rated by overlap) per waste type."""
-    a = pd.read_parquet(CLEAN / "alerts.parquet").query("site == @site")
+    a = (alerts if alerts is not None else pd.read_parquet(CLEAN / "alerts.parquet")).query("site == @site")
     p = pd.Period(month)
     m0, m1 = p.start_time, (p + 1).start_time
     rows = []
@@ -75,9 +75,16 @@ def _alert_kwh(site: str, month: str) -> pd.DataFrame:
 def explain_change(site: str, month_a: str, month_b: str) -> dict:
     d, _ = production_baseline(site)
     b = pd.read_parquet(CLEAN / "monthly_bills.parquet").query("site == @site").set_index("billing_month")
-    A, B = d[d.month == month_a], d[d.month == month_b]
-    bA, bB = b.loc[month_a], b.loc[month_b]
-    t = tariff(site)
+    ev = pd.read_parquet(CLEAN / "events.parquet")
+    al = pd.read_parquet(CLEAN / "alerts.parquet")
+    return explain_frames(site, month_a, month_b, d[d.month == month_a], d[d.month == month_b], b.loc[month_a], b.loc[month_b], tariff(site),
+                          al, al, ev, ev)
+
+
+def explain_frames(site: str, month_a: str, month_b: str, A: pd.DataFrame, B: pd.DataFrame, bA, bB, t: dict,
+                   alerts_a: pd.DataFrame, alerts_b: pd.DataFrame, events_a: pd.DataFrame, events_b: pd.DataFrame, t_b: dict | None = None) -> dict:
+    """explain_change's method on two months given directly, so the months may come from different data years (e.g. Sep 2026 from the
+    original year and Oct 2026 from the live year). A and B carry `pred` from the same frozen baseline; t is month A's tariff."""
 
     # --- kWh: baseline driver split (Shapley over 3 groups) ---------------------------------------------------
     names = list(GROUPS)
@@ -97,7 +104,7 @@ def explain_change(site: str, month_a: str, month_b: str) -> dict:
     calendar = f(frozenset()) - base_A                      # B's calendar with all of A's drivers, minus A
     act_A, act_B = float(A.total_kwh.sum()), float(B.total_kwh.sum())
     ops = (act_B - base_B) - (act_A - base_A)
-    ak = _alert_kwh(site, month_b).sum() - _alert_kwh(site, month_a).sum()
+    ak = _alert_kwh(site, month_b, alerts_b).sum() - _alert_kwh(site, month_a, alerts_a).sum()
     kwh = {"Weather": shap["Weather"], "Occupancy": shap["Occupancy"], "Events": shap["Events"],
            "Calendar (days, weekdays)": calendar, "Detected waste (alerts)": ak, "Unexplained / model noise": ops - ak}
 
@@ -113,22 +120,28 @@ def explain_change(site: str, month_a: str, month_b: str) -> dict:
     lines["ToD net (peak surcharge − off-peak rebate)"] = bB.tod_net_inr - bA.tod_net_inr
     lines["Demand charge (incl. 2% municipal tax)"] = (bB.demand_charge_inr - bA.demand_charge_inr) * (1 + t["muni"])
     lines["Excess-demand penalty"] = bB.excess_demand_penalty_inr - bA.excess_demand_penalty_inr
+    if t_b is not None and t_b != t:                        # months on different tariffs: month B's quantities at B's rates minus A's rates
+        lines["Tariff rates (new rates for the year)"] = (
+            bB.grid_kvah * ((t_b["energy"] - t["energy"]) * (1 + t["muni"]) + (t_b["fsa"] - t["fsa"]) + (t_b["duty"] - t["duty"]))
+            + min(bB.billing_demand_kva, t["cd"]) * (t_b["demand"] - t["demand"]) * (1 + t["muni"])
+            + bB.peak_window_kvah * (t_b["peak"] - t["peak"]) + bB.offpeak_window_kvah * (t_b["off"] - t["off"]) + bB.dg_kwh * (t_b["dg"] - t["dg"]))
     total = bB.total_energy_cost_inr - bA.total_energy_cost_inr
     lines["Meter vs model rounding"] = total - sum(lines.values())
 
     group = {"Weather": "Weather", "Occupancy": "Occupancy", "Events": "Events", "Calendar (days, weekdays)": "Calendar",
              "Detected waste (alerts)": "Anomalies", "Power factor change (kVAh per kWh)": "Anomalies",
              "Unexplained / model noise": "Unexplained", "Excess-demand penalty": "Demand", "Demand charge (incl. 2% municipal tax)": "Demand",
-             "ToD net (peak surcharge − off-peak rebate)": "Tariff mix", "Diesel (DG hours, priced at ₹27.56/kWh)": "Diesel", "Meter vs model rounding": "Unexplained"}
+             "ToD net (peak surcharge − off-peak rebate)": "Tariff mix", "Diesel (DG hours, priced at ₹27.56/kWh)": "Diesel", "Meter vs model rounding": "Unexplained",
+             "Tariff rates (new rates for the year)": "Tariff rates"}
     tab = pd.DataFrame([dict(driver=k, group=group[k], kwh=kwh.get(k, np.nan), inr=v) for k, v in lines.items()])
     ctx = dict(cdh_A=float(A.cdh.sum()), cdh_B=float(B.cdh.sum()), tmax_A=float(A.temp_c.max()), tmax_B=float(B.temp_c.max()),
                rooms_A=float(A.groupby("date").rooms_sold.first().sum()), rooms_B=float(B.groupby("date").rooms_sold.first().sum()),
-               event_guests_A=int(pd.read_parquet(CLEAN / "events.parquet").query("site == @site").pipe(lambda e: e[e.date.astype(str).str[:7] == month_a]).guests.sum()),
-               event_guests_B=int(pd.read_parquet(CLEAN / "events.parquet").query("site == @site").pipe(lambda e: e[e.date.astype(str).str[:7] == month_b]).guests.sum()),
+               event_guests_A=int(events_a.query("site == @site").pipe(lambda e: e[e.date.astype(str).str[:7] == month_a]).guests.sum()),
+               event_guests_B=int(events_b.query("site == @site").pipe(lambda e: e[e.date.astype(str).str[:7] == month_b]).guests.sum()),
                md_A=float(bA.recorded_md_kva), md_B=float(bB.recorded_md_kva), pf_A=float(pfA), pf_B=float(bB.grid_kwh / bB.grid_kvah))
     return dict(site=site, month_a=month_a, month_b=month_b, bill_a=float(bA.total_energy_cost_inr), bill_b=float(bB.total_energy_cost_inr),
                 delta=float(total), table=tab, context=ctx,
-                alert_rules_b=_alert_kwh(site, month_b).sort_values(ascending=False).round(0).to_dict())
+                alert_rules_b=_alert_kwh(site, month_b, alerts_b).sort_values(ascending=False).round(0).to_dict())
 
 
 if __name__ == "__main__":

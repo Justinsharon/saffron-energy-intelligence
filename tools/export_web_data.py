@@ -130,6 +130,8 @@ def export_bills():
                                          groups=g.round(0).to_dict(), lines=x["table"].round(1).to_dict("records"), context=x["context"],
                                          waste_kwh_b=x["alert_rules_b"])
         print(s, "bill pairs done")
+    if LIVE:
+        pairs.update(cross_year_pairs(r))
     write("bill_changes.json", pairs, also_fn=True)
 
 
@@ -187,6 +189,51 @@ def export_quality():
 def export_rating():
     from feedback import RATING_IDS
     write("rating_set.json", RATING_IDS)
+
+
+def cross_year_pairs(recon: pd.DataFrame) -> dict:
+    """Live mode: bill changes whose two months sit in different data years - each live month against the month before when that is in the
+    original year (Sep 2026 -> Oct 2026), and against the same month a year earlier (Oct 2025 -> Oct 2026). Each month's frame, bill,
+    tariff, alerts and events come from its own data folder; both are priced by the same frozen baseline (no refit)."""
+    import attribution as AT
+    import baseline
+    import bills as BL
+    import features
+    from baseline import build_features
+    mods = (features, baseline, AT, BL)
+    live = features.CLEAN
+
+    def year(folder):
+        for m in mods:
+            m.CLEAN = folder
+        try:
+            out = {}
+            for s in SITE_LIST:
+                d = build_features(s)
+                d["pred"] = AT.predict(s, d)
+                out[s] = dict(d=d, bills=pd.read_parquet(folder / "monthly_bills.parquet").query("site == @s").set_index("billing_month"),
+                              tariff=BL.tariff(s))
+            return out, pd.read_parquet(folder / "alerts.parquet"), pd.read_parquet(folder / "events.parquet")
+        finally:
+            for m in mods:
+                m.CLEAN = live
+    O, alO, evO = year(features.DEFAULT_CLEAN)
+    L, alL, evL = year(live)
+    out = {}
+    for s in SITE_LIST:
+        for mb in sorted(recon[recon.site == s].month):
+            prev = (pd.Period(mb) - 1).strftime("%Y-%m")
+            for ma in {prev, (pd.Period(mb) - 12).strftime("%Y-%m")}:
+                if ma not in O[s]["bills"].index:
+                    continue                                        # same-year pairs are already exported
+                o, l = O[s], L[s]
+                x = AT.explain_frames(s, ma, mb, o["d"][o["d"].month == ma], l["d"][l["d"].month == mb], o["bills"].loc[ma], l["bills"].loc[mb],
+                                      o["tariff"], alO, alL, evO, evL, t_b=l["tariff"])
+                g = x["table"].groupby("group").inr.sum()
+                out[f"{s}|{ma}|{mb}"] = dict(site=s, a=ma, b=mb, bill_a=x["bill_a"], bill_b=x["bill_b"], delta=x["delta"], groups=g.round(0).to_dict(),
+                                             lines=x["table"].round(1).to_dict("records"), context=x["context"], waste_kwh_b=x["alert_rules_b"])
+        print(s, "cross-year pairs done")
+    return out
 
 
 def freeze_attribution():

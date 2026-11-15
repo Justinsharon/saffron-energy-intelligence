@@ -174,6 +174,53 @@ const TOOLS: Record<string, { fn: (a: J) => J | Promise<J>; desc: string; params
       return suggest("offline estimate: the plan service was not reachable", res.actions, res.total_inr, { top_temperature_c: Math.round(tmax ?? day.template_tmax) });
     },
   },
+  monthly_report: {
+    desc: "Monthly report for the general manager and finance (any month with an issued bill, Oct 2025 onward): the three hotels' bills vs last month and the same month last year, what drove the change, savings (verified from the daily plan, from acting on alerts, and the Option C total), the bill check, and the top problems. As of the day the bill was issued.",
+    params: { month: "string YYYY-MM, optional (default: the latest month with a bill)" },
+    fn: async (a) => {
+      const bills = billsNow();
+      const months = [...new Set(bills.map((r) => r.month))].sort();
+      const m = a.month && months.includes(a.month) ? a.month : a.month ? null : months.at(-1);
+      if (!m) return { error: `No bill has been issued for ${a.month} yet. Reports exist for ${months[0]} to ${months.at(-1)}.` };
+      const add = (x: string, k: number) => { const [y, mo] = x.split("-").map(Number); return new Date(Date.UTC(y, mo - 1 + k, 1)).toISOString().slice(0, 7); };
+      const prev = add(m, -1), ly = add(m, -12);
+      const row = (s: string, mm: string) => bills.find((r) => r.site === s && r.month === mm);
+      const issued = row("GGN", m)?.bill_issued?.slice(0, 10) ?? `${add(m, 1)}-05`;
+      const asOf = `${issued}T09:00`;
+      const tot = (mm: string) => Object.keys(SITES).reduce((x, s) => x + (row(s, mm)?.billed_total ?? 0), 0);
+      const ch = changesNow();
+      const drivers: J = {};
+      for (const s of Object.keys(SITES)) { const c = ch[`${s}|${prev}|${m}`]; if (c) for (const [k, v] of Object.entries(c.groups as J)) drivers[PLAIN_DRIVER[k] ?? k] = r0((drivers[PLAIN_DRIVER[k] ?? k] ?? 0) + (v as number)); }
+      const al = [...(origAlerts as J[]), ...(liveAlerts as J[])].filter((x) => x.alert_time <= asOf && x.start.slice(0, 7) === m && x.cost > 0);
+      const top = al.sort((x, y) => y.cost - x.cost).slice(0, 5).map((x) => ({ hotel: x.hotel, problem: WASTE[x.rule] ?? x.title, inr: r0(x.cost), status: x.end <= asOf ? "resolved" : "still running" }));
+      let plan: J | null = null;
+      if (m >= "2026-10") {
+        try { const r = await fetch(`${PLAN_API}/savings`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ month: m, as_of: asOf }), signal: AbortSignal.timeout(15000) });
+          if (r.ok) { const j = await r.json(); plan = { verified_inr: r0(j.totals.verified_inr), planned_inr: r0(j.totals.planned_inr), missed_inr: r0(j.totals.missed_inr), days: j.totals.days, note: j.honesty }; } } catch { plan = null; }
+      }
+      let optionC: J | null = null;
+      if (m >= "2026-10") {
+        let kwh = 0, inr = 0;
+        for (const s of Object.keys(SITES)) {
+          const h = HOURLY[s]; let A = 0, B = 0;
+          h.t.forEach((t: string, i: number) => { if (t.slice(0, 7) === m && t <= asOf.slice(0, 13) && !h.f[i]) { A += h.a[i]; B += h.b[i]; } });
+          const r = row(s, m); const rate = r ? r.billed_total / Math.max(r.billed_kvah * r.pf, 1) : 0;
+          kwh += B - A; inr += (B - A) * rate;
+        }
+        optionC = { kwh_below_adjusted_baseline: r0(kwh), inr: r0(inr) };
+      }
+      const alertInr = r0(al.reduce((x, y) => x + y.cost, 0));
+      return { month: m, as_of: issued, hotels: Object.fromEntries(Object.entries(SITES).map(([s, name]) => [name, { bill_inr: r0(row(s, m)?.billed_total ?? 0),
+        last_month_inr: row(s, prev) ? r0(row(s, prev)!.billed_total) : null, same_month_last_year_inr: row(s, ly) ? r0(row(s, ly)!.billed_total) : null,
+        bill_check: row(s, m)?.status, billed_minus_our_meter_inr: r0(row(s, m)?.billed_minus_corrected ?? 0) }])),
+        total_inr: r0(tot(m)), change_vs_last_month_inr: tot(prev) ? r0(tot(m) - tot(prev)) : null, change_vs_last_year_inr: tot(ly) ? r0(tot(m) - tot(ly)) : null,
+        what_drove_the_change_inr: Object.keys(drivers).length ? drivers : "no comparison available",
+        savings: { from_the_daily_plan_verified: plan ?? (m < "2026-10" ? "daily plans started in October 2026" : "the planning service did not answer"),
+          from_acting_on_alerts_inr: alertInr, option_c_total: optionC ?? "not computed for months before October 2026 here; see the Monthly report page",
+          rule: "a rupee counts as a plan saving or an alert saving, never both" },
+        top_problems: top, simulated_meters: m >= "2026-10" };
+    },
+  },
   today_status: {
     desc: "Right now at one or all hotels, from the live feed (simulated meters) up to the current hour in India: energy used today vs expected, today's peak power demand, problems running now with their cost per day and action, meter faults, and the latest bill received.",
     params: { site: "string: GGN/JAI/GOA or hotel name, optional (default all three)" },
@@ -288,7 +335,8 @@ Don't mention the power factor by name; say "the capacitor panel fault made the 
 You only recommend; a person approves every action. Never suggest automatic control of kitchen exhaust, guest-room thermostats, lifts or life-safety,
 and never a chilled-water setpoint below 6.5 °C. Questions about tomorrow or a coming date use forecast_upcoming (real weather forecast). forecast_scenario is a what-if for a hot weekday in May; forecast_day is for past dates.
 Questions about right now, today, the latest readings or what is wrong at the moment use today_status (live feed, simulated meters, up to the current hour).
-Questions about what to set or do today or tomorrow (chillers, chilled water, laundry, water heating, banquet air handlers, EV chargers) use operating_plan; say whether the step is approved or only suggested.`;
+Questions about what to set or do today or tomorrow (chillers, chilled water, laundry, water heating, banquet air handlers, EV chargers) use operating_plan; say whether the step is approved or only suggested.
+Requests to summarise or report a month (for the GM or finance) use monthly_report.`;
 const system = () => `${SYSTEM}\nNow is ${istNowFull().replace("T", " ")} (India). Meter data: Oct 2025 – Sep 2026 is the original sample year; from 1 Oct 2026 it is a live feed from simulated meters, available up to the current hour only. Bills are available once issued (5th of the following month); say so if asked about a later one.`;
 
 // ---------- 3. number check ----------
@@ -333,6 +381,7 @@ function route(q: string): [string, J][] {
     if (!a) { const [y, m] = b.split("-").map(Number); a = m === 1 ? `${y - 1}-12` : `${y}-${String(m - 1).padStart(2, "0")}`; }
     return [["explain_bill_change", { site: s, month_a: a, month_b: b }]];
   }
+  if (/report|summari[sz]e|summary|for the gm|for finance|month in review/.test(ql)) return [["monthly_report", ym[0] ? { month: ym[0] } : {}]];
   if (/bill|reconcil|provisional/.test(ql)) return [["bill_reconciliation", { site: s, month: ym[0] }]];
   const named = Object.entries(SITES).some(([c, n]) => ql.includes(n.toLowerCase()) || new RegExp(`\\b${c.toLowerCase()}\\b`).test(ql));
   if (/right now|\bnow\b|today|latest|currently|at the moment|so far|how is|how are|status/.test(ql)) return [["today_status", named ? { site: s } : {}]];
@@ -358,6 +407,17 @@ function template(calls: [string, J, J][]): string {
       p.push(`Gurugram plan for ${r.date}${r.part_of_day ? ` (${r.part_of_day})` : ""}: ${r.plan}.`);
       for (const s of r.steps) p.push(`- ${s.from.replace(" (next day)", "")}–${s.to.replace("00:00 (next day)", "24:00").replace(" (next day)", "")}: ${s.what}: ${s.setting}${s.saving_inr >= 1 ? ` (saves about ${f(s.saving_inr)})` : ""}. ${s.status === "suggested" ? "Suggested." : s.status[0].toUpperCase() + s.status.slice(1) + "."}`);
       if (!r.steps.length) p.push("No steps fall in that part of the day.");
+    }
+    else if (n === "monthly_report") {
+      p.push(`${r.month} (as of ${r.as_of}, when the bill was issued): the three hotels' bills came to ${f(r.total_inr)}` +
+        (r.change_vs_last_month_inr != null ? `, ${r.change_vs_last_month_inr >= 0 ? "up" : "down"} ${f(Math.abs(r.change_vs_last_month_inr))} on last month` : "") +
+        (r.change_vs_last_year_inr != null ? ` and ${r.change_vs_last_year_inr >= 0 ? "up" : "down"} ${f(Math.abs(r.change_vs_last_year_inr))} on the same month last year` : "") + ".");
+      if (typeof r.what_drove_the_change_inr === "object") p.push("What drove the change: " + Object.entries(r.what_drove_the_change_inr as Record<string, number>).sort((x, y) => Math.abs(y[1]) - Math.abs(x[1])).slice(0, 5).map(([k, v]) => `${k} ${v >= 0 ? "+" : "−"}${f(Math.abs(v))}`).join(", ") + ".");
+      const sv = r.savings;
+      p.push(`Savings: from acting on alerts ${f(sv.from_acting_on_alerts_inr)}` + (typeof sv.from_the_daily_plan_verified === "object" ? `; from the daily plan (verified) ${f(sv.from_the_daily_plan_verified.verified_inr)}` : "") +
+        (typeof sv.option_c_total === "object" ? `; total effect against the adjusted baseline ${f(sv.option_c_total.inr)}` : "") + ". A rupee is counted once.");
+      for (const [h, x] of Object.entries(r.hotels as J)) p.push(`- ${h}: ${f((x as J).bill_inr)}, bill check: ${(x as J).bill_check}.`);
+      if (r.top_problems.length) p.push("Top problems: " + r.top_problems.map((x: J) => `${x.hotel} ${x.problem} ${f(x.inr)} (${x.status})`).join("; ") + ".");
     }
     else if (n === "today_status") {
       p.push(`As of ${r.as_of_india_time} (India), from the live feed (simulated meters):`);

@@ -81,6 +81,15 @@ def main():
                                   "social": int(ev[ev.event_type.str.startswith("Wedding")].guests.max())},
                     event_start_hours=[int(ev.start_time.str[:2].astype(int).min()), int(ev.start_time.str[:2].astype(int).max())]))
     (OUT / "meta.json").write_text(json.dumps(meta, indent=1, ensure_ascii=False), encoding="utf-8")
+
+    # live-year meters for plan vs actual (src/plan_check.py). The API cuts them at the current IST hour on every request.
+    from features import gurugram_hourly
+    sub = pd.read_parquet(EP.LIVE / "sub_ggn_hourly.parquet")
+    sub["chillers_kw"] = sub.chiller_ch1_kw + sub.chiller_ch2_kw + sub.chiller_ch3_kw
+    hm = gurugram_hourly(pd.read_parquet(EP.LIVE / "meter_ggn_15min.parquet"))[["timestamp", "kva_max_in_hour", "total_kwh"]].rename(columns={"kva_max_in_hour": "kva"})
+    cols = ["timestamp", "chiller_ch1_kw", "chiller_ch3_kw", "chillers_kw", "chiller_load_tr", "chw_setpoint_c", "ahu_banquet_kw", "laundry_kw",
+            "water_heating_kw", "ev_chargers_kw"]
+    sub[cols].merge(hm, on="timestamp", how="left").to_parquet(OUT / "live_meters.parquet", index=False)
     size = sum(f.stat().st_size for f in OUT.iterdir()) / 2 ** 20
     print(f"models/: {', '.join(f.name for f in sorted(OUT.iterdir()))} ({size:.1f} MB); {len(refs)} dates; cooling model {acc['hourly_cv_rmse_pct']} % CV(RMSE)")
 

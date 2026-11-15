@@ -28,6 +28,7 @@ function sentence(group: string, v: number, c: BillChange["context"], d: BillCha
     case "Calendar": return `The number of days in the month ${s}.`;
     case "Diesel": return `Running the diesel generator ${s}; diesel power costs about three times grid power.`;
     case "Tariff mix": return `Using more or less power in the expensive evening hours ${s}.`;
+    case "Tariff rates": return `The new tariff year's higher rates ${s} on the same use.`;
     default: return `About ${inr(Math.abs(v))} (${Math.abs(v / d.bill_a * 100).toFixed(1)}% of the bill) is not explained by weather, guests, events or known waste.`;
   }
 }
