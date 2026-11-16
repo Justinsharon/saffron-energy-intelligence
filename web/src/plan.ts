@@ -24,7 +24,13 @@ const GUARD = {
 };
 
 export type Hall = "A" | "B" | "A+B";
-export interface Booking { hall: Hall; start: string; end: string; guests: number }
+// Jaipur / Goa bookings name the venue (src/operating_plan.plan_site; venues from each hotel's events calendar, served by the plan API)
+export interface Booking { hall: Hall | string; start: string; end: string; guests: number }
+export type PlanSite = "GGN" | "JAI" | "GOA";
+// the two-chiller guardrail line per hotel = its smaller chiller's capacity (equipment register; src/operating_plan.TWO_MIN_TR, checked by
+// tests/test_site_plan.py); Gurugram's is CH-3's 130 TR band
+export const TWO_MIN_TR: Record<PlanSite, number> = { GGN: CH3_MAX, JAI: 200, GOA: 150 };
+export const FILTRATION_MIN_H = 8;
 interface Resp { start: number[]; end: number[]; during: number }
 export interface Tariff { energy: number; fsa: number; duty: number; peak: number; offpeak: number; penalty: number }
 export interface PlanRef { kwtr_ly: (number | null)[]; laundry_peak_kwh: number; water_peak_kwh: number; ev_kw: number[];
@@ -39,8 +45,9 @@ export interface PlanDay {
   ref: PlanRef;
 }
 export interface Action {
-  kind: "plan"; group: "chillers" | "chw" | "ahu" | "laundry" | "water" | "ev"; start: string; end: string; equipment: string; setting: string;
+  kind: "plan"; group: "chillers" | "chw" | "ahu" | "laundry" | "water" | "ev" | "lighting" | "pool" | "demand"; start: string; end: string; equipment: string; setting: string;
   reason: string; saving_inr: number; guardrail: string; min_tr?: number; max_tr?: number; setpoint_c?: number; on_h?: number; start_h?: number;
+  site?: PlanSite; estimate_inr?: number; counted?: boolean; verifiable?: string; run_hours?: number; venue?: string;
 }
 
 const f0 = (x: number) => x.toFixed(0);
@@ -93,7 +100,7 @@ export function composeDay(day: PlanDay, inp: Inputs = {}) {
     let k = b.kw[h] + r.kw_per_room[h] * dr + r.kw_per_guest[h] * dg + r.kw_per_cover[h] * dc + r.kw_per_c[h] * dt;
     let t = b.tr[h] + r.tr_per_room[h] * dr + r.tr_per_guest[h] * dg + r.tr_per_c[h] * dt;
     for (const bk of bookings) {
-      const [s, e] = parseBooking(bk); const q = day.banquet[bk.hall];
+      const [s, e] = parseBooking(bk); const q = day.banquet[bk.hall as Hall];
       k += (bk.guests / 100) * banquetDelta(h, s, e, q.kw);
       t += (bk.guests / 100) * banquetDelta(h, s, e, q.tr);
     }
@@ -141,7 +148,7 @@ export function planDay(hourlyTr: number[], hourlyKva: number[], tempC: number[]
     const [s, e] = parseBooking(bk);
     const on = Math.max(s - 1, s - 2, 0), off = e + 1;
     const ly = ref.ahu_overrun_kwh[bk.hall === "A+B" ? "social" : "corporate"];
-    acts.push({ kind: "plan", group: "ahu", start: hh(on), end: hh(off), equipment: `Banquet AHUs, Hall ${bk.hall} (${AHU[bk.hall]})`, setting: `On at ${hh(on)}, off at ${hh(off)}`,
+    acts.push({ kind: "plan", group: "ahu", start: hh(on), end: hh(off), equipment: `Banquet AHUs, Hall ${bk.hall} (${AHU[bk.hall as Hall]})`, setting: `On at ${hh(on)}, off at ${hh(off)}`,
       reason: `Event in Hall ${bk.hall} ${bk.start}–${bk.end} (${bk.guests} guests): pre-cool 1 h before, stop 1 h after. Last year the AHUs ran on about ${f0(ly)} kWh after similar events ended (left in hand mode).`,
       saving_inr: ly * rate, guardrail: GUARD.ahu, on_h: on, start_h: s });
   }
@@ -180,7 +187,9 @@ export function validate(acts: Action[]): void {
     const bad = EXCLUDED.find((w) => text.includes(w));
     if (bad) throw new Error(`plan touches excluded equipment (${bad}): ${a.equipment}`);
     if (a.group === "chw" && (a.setpoint_c ?? CHW_STD) < CHW_FLOOR) throw new Error("setpoint below 6.5 °C");
-    if (a.group === "chillers" && a.setting.includes("together") && (a.min_tr ?? 0) < CH3_MAX) throw new Error("two chillers planned below 130 TR");
+    const two = TWO_MIN_TR[a.site ?? "GGN"] ?? CH3_MAX;
+    if (a.group === "chillers" && a.setting.includes("together") && (a.min_tr ?? 0) < two) throw new Error(`two chillers planned below ${two} TR`);
+    if (a.group === "pool" && (a.run_hours ?? 99) < FILTRATION_MIN_H) throw new Error(`pool filtration under ${FILTRATION_MIN_H} h a day`);
     if (a.group === "ahu" && (a.start_h ?? 0) - (a.on_h ?? 0) > 2) throw new Error("banquet AHU on more than 2 h before the event");
     if (!Number.isFinite(a.saving_inr)) throw new Error("saving is not a number");
   }
@@ -207,10 +216,10 @@ export function riskFor(kva: number[], cal: RiskCal) {
 
 /** Stable id for an action within a day's plan (decisions are stored against it). */
 export const actionId = (a: Action) => `${a.group}|${a.start}|${a.equipment}`;
-const ORDER = ["chillers", "chw", "ahu", "laundry", "ev", "water"];
+const ORDER = ["chillers", "chw", "ahu", "lighting", "pool", "laundry", "ev", "water", "demand"];
 /** Timeline order: by start time (next-day starts last), then by kind. */
 export function byTime(acts: Action[]): Action[] {
   const h = (a: Action) => Number(a.start.slice(0, 2)) + (a.start.includes("next day") ? 24 : 0);
   return [...acts].sort((x, y) => h(x) - h(y) || ORDER.indexOf(x.group) - ORDER.indexOf(y.group));
 }
-export const TAG: Record<Action["group"], string> = { chillers: "CH", chw: "CHW", ahu: "AHU-BQ", laundry: "LDY", water: "DHW", ev: "EVC" };
+export const TAG: Record<Action["group"], string> = { chillers: "CH", chw: "CHW", ahu: "AHU-BQ", laundry: "LDY", water: "DHW", ev: "EVC", lighting: "LTG", pool: "POOL", demand: "kVA" };

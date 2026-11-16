@@ -1,4 +1,4 @@
-"""Frozen Gurugram plan models and the booking -> feature step, shared by tools/export_plan_inputs.py, tools/export_api_models.py and the
+"""Frozen plan models (Gurugram; Jaipur and Goa from tools/train_api_models.py) and the booking -> feature step, shared by tools/export_plan_inputs.py, tools/export_api_models.py and the
 API (api/main.py). Lives in src/ so the models saved with joblib (models/plan_models.joblib) refer to an importable class.
 
 All models are fitted on the original year only (Oct 2025 - Sep 2026) and never refitted at run time:
@@ -38,15 +38,16 @@ def booking_hours(start: str, end: str) -> tuple[int, int]:
     return sh, e
 
 
-def add_bookings(frame: pd.DataFrame, day: pd.Timestamp, bookings: list) -> pd.DataFrame:
+def add_bookings(frame: pd.DataFrame, day: pd.Timestamp, bookings: list, venues: dict | None = None) -> pd.DataFrame:
     """Event features for the bookings, built the way baseline._event_hours builds them from the calendar (AHUs from 1 h before the
     start to 1 h after the end; 'core' while guests are in the hall), but from integer hours so any start time works, including
-    events that cross midnight. Bookings: dicts with hall (A / B / A+B), start, end (HH:MM) and guests."""
+    events that cross midnight. Bookings: dicts with hall (A / B / A+B; for Jaipur and Goa the venue name), start, end (HH:MM) and guests.
+    venues: Jaipur / Goa venue -> {"event_type": ...} (from the events calendar, tools/train_api_models.py); None = Gurugram's halls."""
     x = frame.copy()
     x[EV_COLS] = 0.0
     ts = x.timestamp
     for b in bookings:
-        typ, _ = HALL_EVENT[b["hall"]]
+        typ = HALL_EVENT[b["hall"]][0] if venues is None else venues[b["hall"]]["event_type"]
         s, e = booking_hours(b["start"], b["end"])
         g = float(b["guests"])
         social = "edding" in typ or "MICE" in typ
@@ -60,7 +61,7 @@ def add_bookings(frame: pd.DataFrame, day: pd.Timestamp, bookings: list) -> pd.D
     return x
 
 
-def predict(models: dict, frame: pd.DataFrame) -> dict:
-    """kW, cooling TR (never below 0) and peak kVA for every row; temperature-derived features are recomputed first."""
-    d = thermal_features(frame)
+def predict(models: dict, frame: pd.DataFrame, site: str = "GGN") -> dict:
+    """kW, cooling TR (never below 0) and peak kVA for every row; temperature-derived features are recomputed first (site's CDH base)."""
+    d = thermal_features(frame, site)
     return dict(kw=models["kw"].predict(d), tr=np.clip(models["tr"].predict(d), 0, None), kva=models["kva"].predict(d))

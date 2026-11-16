@@ -2,13 +2,13 @@ import { useEffect, useMemo, useState } from "react";
 import { CartesianGrid, ComposedChart, Line, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { useClock } from "../App";
 import { Gauge, KVA } from "../components/parts";
-import { load, useData, type ForecastDay } from "../data";
+import { load, SITE_NAME, useData, type ForecastDay } from "../data";
 import { useWeather } from "../live";
 import { useFeeds } from "../feed";
 import { addMs, DAY_MS, fmtD, inr, istNow, n, parse } from "../format";
 import { LOAD } from "../copy";
-import { actionId, hh, TAG, type Booking, type Hall, type PlanDay, type RiskCal } from "../plan";
-import { checkPlan, getPlan, type CheckResult, type CheckStep, type PlanResult } from "../planApi";
+import { actionId, hh, TAG, type Booking, type PlanDay, type PlanSite, type RiskCal } from "../plan";
+import { apiPlan, checkPlan, getPlan, type CheckResult, type CheckStep, type PlanResult } from "../planApi";
 import { checkActions, type PlanView, type SavedAction } from "../planlog";
 import { loadPlan, plannerName, postPlan, setPlannerName } from "../planStore";
 
@@ -18,10 +18,27 @@ const HEAD: Record<string, string> = {
 const DAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 const dow = (d: string) => DAYS[parse(d).getUTCDay()];
 const addDays = (d: string, k: number) => addMs(`${d}T00:00`, k * DAY_MS).slice(0, 10);
-const HALLS: { v: Hall; label: string }[] = [{ v: "A", label: "Hall A" }, { v: "B", label: "Hall B" }, { v: "A+B", label: "Halls A + B" }];
-const START_H = Array.from({ length: 17 }, (_, i) => i + 6);           // 06:00 .. 22:00
-const END_H = Array.from({ length: 17 }, (_, i) => i + 7);             // 07:00 .. 23:00, plus "past midnight"
-const hm = (h: number) => `${String(h).padStart(2, "0")}:00`;
+// each hotel's venues (Gurugram's halls; Jaipur / Goa from their events calendars, as the plan API validates them)
+const VENUES: Record<PlanSite, { v: string; label: string }[]> = {
+  GGN: [{ v: "A", label: "Hall A" }, { v: "B", label: "Hall B" }, { v: "A+B", label: "Halls A + B" }],
+  JAI: [{ v: "Palace Lawns", label: "Palace Lawns" }, { v: "Durbar Hall", label: "Durbar Hall" }],
+  GOA: [{ v: "Sunset Deck + Ballroom", label: "Sunset Deck + Ballroom" }],
+};
+const NEW_BOOKING: Record<PlanSite, Booking> = { GGN: { hall: "A", start: "09:00", end: "18:00", guests: 150 },
+  JAI: { hall: "Palace Lawns", start: "18:00", end: "23:00", guests: 300 }, GOA: { hall: "Sunset Deck + Ballroom", start: "18:00", end: "23:00", guests: 200 } };
+// what the charts mark per hotel: contract limit, warning line, and the chiller lines (Gurugram: CH-3 / CH-1; Jaipur / Goa: one chiller
+// with its 10 % margin, both chillers) - from each hotel's register
+const LIMITS: Record<PlanSite, { cd: number; warn: number; chillers: { y: number; label: string }[]; chillerNote: string }> = {
+  GGN: { cd: 1000, warn: 920, chillers: [{ y: 130, label: "CH-3 limit" }, { y: 280, label: "CH-1 limit" }], chillerNote: "One small chiller (CH-3) up to 130 TR · one large (CH-1) up to 280 TR" },
+  JAI: { cd: 700, warn: 644, chillers: [{ y: 180, label: "one chiller" }, { y: 400, label: "both chillers" }], chillerNote: "One chiller (200 TR) up to 180 TR with a 10 % margin · both up to 400 TR" },
+  GOA: { cd: 600, warn: 552, chillers: [{ y: 135, label: "one chiller" }, { y: 300, label: "both chillers" }], chillerNote: "One chiller (150 TR) up to 135 TR with a 10 % margin · both up to 300 TR" },
+};
+const PLAN_SITES: PlanSite[] = ["GGN", "JAI", "GOA"];
+const siteStore = { get: (): PlanSite => { try { const s = localStorage.getItem("plan_site"); return s === "JAI" || s === "GOA" ? s : "GGN"; } catch { return "GGN"; } },
+  set: (s: PlanSite) => { try { localStorage.setItem("plan_site", s); } catch { /* private window */ } } };
+const START_H = Array.from({ length: 33 }, (_, i) => 6 + i / 2);       // 06:00 .. 22:00 in half hours
+const END_H = Array.from({ length: 34 }, (_, i) => 7 + i / 2);         // 07:00 .. 23:30, plus "past midnight"
+const hm = (h: number) => `${String(Math.floor(h)).padStart(2, "0")}:${h % 1 ? "30" : "00"}`;
 
 interface PlanIndex { days: Record<string, { tmax: number; rooms: number; covers: number }>; cooling_model: Record<string, number | string>; risk: RiskCal }
 interface Form { rooms: number; guests: number; covers: number; bookings: Booking[]; notes: string; touched: Record<string, boolean> }
@@ -33,9 +50,10 @@ function usePlanDay(date: string): PlanDay | null | undefined {
 }
 
 /** Electricity and peak power demand, then cooling load, for the planned day. */
-function ForecastCharts({ kw, kva, tr }: { kw: number[]; kva: number[]; tr: number[] }) {
+function ForecastCharts({ kw, kva, tr, site }: { kw: number[]; kva: number[]; tr: number[]; site: PlanSite }) {
   const rows = kw.map((_, h) => ({ h, kw: Math.round(kw[h]), kva: Math.round(kva[h]), tr: Math.round(tr[h]) }));
-  const top = Math.max(1100, ...kva.map((x) => x + 60));
+  const L = LIMITS[site];
+  const top = Math.max(L.cd + 100, ...kva.map((x) => x + 60));
   return (
     <div className="grid g2 charts2">
       <div className="panel">
@@ -43,8 +61,8 @@ function ForecastCharts({ kw, kva, tr }: { kw: number[]; kva: number[]; tr: numb
         <div className="legend" style={{ marginBottom: 4 }}>
           <span><i style={{ background: "#151515" }} />Electricity used (kW)</span>
           <span><i style={{ background: "#e8613c" }} />Peak power demand (kVA)</span>
-          <span><i style={{ background: "#c93a1c" }} />Contracted limit 1,000 kVA</span>
-          <span><i style={{ background: "#e2a04a" }} />Early-warning 920 kVA</span>
+          <span><i style={{ background: "#c93a1c" }} />Contracted limit {n(L.cd)} kVA</span>
+          <span><i style={{ background: "#e2a04a" }} />{site === "GGN" ? "Early-warning" : "Demand step line (8 % below)"} {n(L.warn)} kVA</span>
         </div>
         <ResponsiveContainer width="100%" height={240}>
           <ComposedChart data={rows} margin={{ top: 8, right: 8, bottom: 0, left: -10 }}>
@@ -52,8 +70,8 @@ function ForecastCharts({ kw, kva, tr }: { kw: number[]; kva: number[]; tr: numb
             <XAxis dataKey="h" tickFormatter={(h) => `${h}:00`} tick={{ fontSize: 11, fill: "#9b9b9b" }} minTickGap={18} />
             <YAxis domain={[0, top]} tick={{ fontSize: 11, fill: "#9b9b9b" }} width={46} />
             <Tooltip labelFormatter={(h) => `${h}:00`} formatter={(v: number, k: string) => [n(v) + (k === "kw" ? " kW" : " kVA"), k === "kw" ? "Electricity" : "Peak demand"]} />
-            <ReferenceLine y={1000} stroke="#c93a1c" strokeDasharray="5 3" />
-            <ReferenceLine y={920} stroke="#e2a04a" strokeDasharray="2 3" />
+            <ReferenceLine y={L.cd} stroke="#c93a1c" strokeDasharray="5 3" />
+            <ReferenceLine y={L.warn} stroke="#e2a04a" strokeDasharray="2 3" />
             <Line dataKey="kw" stroke="#151515" strokeWidth={1.6} dot={false} isAnimationActive={false} />
             <Line dataKey="kva" stroke="#e8613c" strokeWidth={2.4} dot={false} isAnimationActive={false} />
           </ComposedChart>
@@ -63,16 +81,15 @@ function ForecastCharts({ kw, kva, tr }: { kw: number[]; kva: number[]; tr: numb
         <h3 style={{ marginTop: 0 }}>Cooling load</h3>
         <div className="legend" style={{ marginBottom: 4 }}>
           <span><i style={{ background: "#3f6fa8" }} />Cooling the hotel needs (tons, TR)</span>
-          <span><i style={{ background: "#9b9b9b" }} />One small chiller (CH-3) up to 130 TR · one large (CH-1) up to 280 TR</span>
+          <span><i style={{ background: "#9b9b9b" }} />{L.chillerNote}</span>
         </div>
         <ResponsiveContainer width="100%" height={240}>
           <ComposedChart data={rows} margin={{ top: 8, right: 8, bottom: 0, left: -10 }}>
             <CartesianGrid stroke="#efefef" vertical={false} />
             <XAxis dataKey="h" tickFormatter={(h) => `${h}:00`} tick={{ fontSize: 11, fill: "#9b9b9b" }} minTickGap={18} />
-            <YAxis domain={[0, Math.max(300, ...tr.map((x) => x + 30))]} tick={{ fontSize: 11, fill: "#9b9b9b" }} width={46} />
+            <YAxis domain={[0, Math.max(L.chillers[0].y + 60, ...tr.map((x) => x + 30))]} tick={{ fontSize: 11, fill: "#9b9b9b" }} width={46} />
             <Tooltip labelFormatter={(h) => `${h}:00`} formatter={(v: number) => [n(v) + " TR", "Cooling load"]} />
-            <ReferenceLine y={130} stroke="#9b9b9b" strokeDasharray="4 3" label={{ value: "CH-3 limit", position: "insideTopRight", fontSize: 10, fill: "#9b9b9b" }} />
-            <ReferenceLine y={280} stroke="#9b9b9b" strokeDasharray="4 3" label={{ value: "CH-1 limit", position: "insideTopRight", fontSize: 10, fill: "#9b9b9b" }} />
+            {L.chillers.map((c) => <ReferenceLine key={c.y} y={c.y} stroke="#9b9b9b" strokeDasharray="4 3" label={{ value: c.label, position: "insideTopRight", fontSize: 10, fill: "#9b9b9b" }} />)}
             <Line dataKey="tr" stroke="#3f6fa8" strokeWidth={2.2} dot={false} isAnimationActive={false} />
           </ComposedChart>
         </ResponsiveContainer>
@@ -91,11 +108,11 @@ function Field({ label, value, suggested, touched, onChange, min = 0, max }: { l
   );
 }
 
-function BookingRow({ b, onChange, onRemove }: { b: Booking; onChange: (b: Booking) => void; onRemove: () => void }) {
-  const sh = Number(b.start.slice(0, 2));
+function BookingRow({ b, venues, onChange, onRemove }: { b: Booking; venues: { v: string; label: string }[]; onChange: (b: Booking) => void; onRemove: () => void }) {
+  const sh = Number(b.start.slice(0, 2)) + (b.start.slice(3, 5) === "30" ? 0.5 : 0);
   return (
     <div className="booking">
-      <select aria-label="Hall" value={b.hall} onChange={(e) => onChange({ ...b, hall: e.target.value as Hall })}>{HALLS.map((h) => <option key={h.v} value={h.v}>{h.label}</option>)}</select>
+      <select aria-label="Venue" value={b.hall} onChange={(e) => onChange({ ...b, hall: e.target.value })}>{venues.map((h) => <option key={h.v} value={h.v}>{h.label}</option>)}</select>
       <select aria-label="Start" value={b.start} onChange={(e) => onChange({ ...b, start: e.target.value })}>{START_H.map((h) => <option key={h} value={hm(h)}>from {hm(h)}</option>)}</select>
       <select aria-label="End" value={b.end} onChange={(e) => onChange({ ...b, end: e.target.value })}>
         {END_H.filter((h) => h > sh).map((h) => <option key={h} value={hm(h)}>to {hm(h)}</option>)}
@@ -149,7 +166,7 @@ function Step({ a, edit, decision, canDecide, busy, onDecide, chk }: {
     <li className={`step ${state}`}>
       <div className="stime"><b>{t(start)}</b><span>to {t(end)}</span>{edit && <em>edited</em>}</div>
       <div className="body">
-        <div className="row1"><span className="tag">{TAG[a.group]}</span><strong>{edit && a.group === "ahu" ? `On at ${start}, off at ${end}` : a.setting}</strong><span className="money">{a.saving_inr >= 1 ? `${inr(a.saving_inr)} vs last year` : "no saving, keeps it safe"}</span></div>
+        <div className="row1"><span className="tag">{TAG[a.group]}</span><strong>{edit && (a.group === "ahu" || a.group === "lighting") ? `On at ${start}, off at ${end}` : a.setting}</strong><span className="money">{a.saving_inr >= 1 ? `${inr(a.saving_inr)} vs last year` : a.counted === false ? "not verifiable, not counted" : a.group === "demand" ? "watch only, no ₹ claimed" : "no saving, keeps it safe"}</span></div>
         <div className="small muted">{a.equipment}</div>
         <p className="why">{a.reason}</p>
         {edit && <p className="small" style={{ margin: "0 0 8px", color: "var(--coral)" }}>Time changed from {a.start}–{a.end} to {start}–{end} by {edit.by} at {edit.at.slice(11)}{edit.reason ? `: ${edit.reason}` : ""}.</p>}
@@ -193,10 +210,24 @@ function TomorrowPlan() {
   useEffect(() => setDate(live ? tomorrow : today), [live, today]);
   const asOf = live ? istNow() : clockNow;
   const past = date <= today;
-  const day = usePlanDay(date);
+  const [site, setSiteState] = useState<PlanSite>(siteStore.get);
+  const setSite = (s: PlanSite) => { siteStore.set(s); setSiteState(s); };
+  const ggnDay = usePlanDay(date);
+  // Jaipur / Goa: the usual inputs for the date come from the plan API (their models are not shipped to the browser)
+  const [siteBase, setSiteBase] = useState<{ rooms: number; guests: number; covers: number } | null | undefined>(undefined);
+  useEffect(() => {
+    if (site === "GGN") return;
+    let on = true;
+    setSiteBase(undefined);
+    apiPlan({ date, site }).then((r) => on && setSiteBase(r.defaults ?? null)).catch(() => on && setSiteBase(null));
+    return () => { on = false; };
+  }, [site, date]);
+  const day = site === "GGN" ? ggnDay : undefined;
+  const base = site === "GGN" ? (ggnDay ? ggnDay.defaults : ggnDay) : siteBase;
   const wx = useWeather();
   const feeds = useFeeds(istNow(), true);
-  const g = feeds?.feeds.GGN.today;
+  const g = feeds?.feeds[site].today;
+  const L = LIMITS[site];
   const [name, setName] = useState(plannerName());
   const [form, setForm] = useState<Form | null>(null);
   const [saved, setSaved] = useState<PlanView | null>(null);
@@ -205,37 +236,40 @@ function TomorrowPlan() {
   const last = useMemo(() => { const ds = Object.keys(idx?.days ?? {}).filter((d) => d >= addDays(realToday, 1)).sort(); return ds[Math.min(13, ds.length - 1)] ?? addDays(realToday, 14); }, [idx, realToday]);
 
   // a saved plan for the date pre-fills the form; otherwise the day's suggested values
+  const baseKey = base ? `${site}|${date}|${base.rooms}|${base.guests}|${base.covers}` : "";
   useEffect(() => {
-    if (!day) return;
+    if (!base) return;
     let on = true;
     setForm(null); setSaved(null); setErr("");
-    loadPlan(date).then((v) => {
+    loadPlan(date, site).then((v) => {
       if (!on) return;
       setSaved(v);
       const i = v.plan?.inputs;
       setForm(i ? { rooms: i.rooms, guests: i.guests, covers: i.covers, bookings: i.bookings, notes: i.notes, touched: { rooms: true, guests: true, covers: true } }
-                : { rooms: day.defaults.rooms, guests: day.defaults.guests, covers: day.defaults.covers, bookings: [], notes: "", touched: {} });
+                : { rooms: base.rooms, guests: base.guests, covers: base.covers, bookings: [], notes: "", touched: {} });
     });
     return () => { on = false; };
-  }, [day, date]);
+  }, [baseKey]);
 
-  const hourly = wx?.hourly.GGN[date];
+  const hourly = site === "GGN" ? wx?.hourly.GGN[date] : undefined;
   const temps = hourly && hourly.length === 24 ? hourly : null;
   // the plan API (models on the actual inputs), 600 ms after the last change; offline estimate in the browser if it fails or is slow
   const [res, setRes] = useState<PlanResult | null>(null);
   const [planning, setPlanning] = useState(false);
-  const reqKey = form ? JSON.stringify([date, form.rooms, form.guests, form.covers, form.bookings]) : "";
+  const reqKey = form ? JSON.stringify([site, date, form.rooms, form.guests, form.covers, form.bookings]) : "";
+  const [planErr, setPlanErr] = useState("");
   useEffect(() => {
-    if (!day || !form) return;
+    if (!base || !form) return;
     let on = true;
     setPlanning(true);
     const t = setTimeout(() => {
-      getPlan({ date, rooms: form.rooms, guests: form.guests, covers: form.covers, bookings: form.bookings }, { day, temps, cal: idx?.risk ?? null })
-        .then((r) => on && setRes(r)).catch(() => on && setRes(null)).finally(() => on && setPlanning(false));
+      getPlan({ date, site, rooms: form.rooms, guests: form.guests, covers: form.covers, bookings: form.bookings }, { day: day ?? null, temps, cal: idx?.risk ?? null })
+        .then((r) => { if (on) { setRes(r); setPlanErr(""); } })
+        .catch((e) => { if (on) { setRes(null); setPlanErr(String((e as Error).message ?? e)); } }).finally(() => on && setPlanning(false));
     }, 600);
     return () => { on = false; clearTimeout(t); };
-  }, [reqKey, day, temps, idx]);
-  useEffect(() => setRes(null), [date]);
+  }, [reqKey, baseKey, temps, idx]);
+  useEffect(() => setRes(null), [date, site]);
   const actions: SavedAction[] = useMemo(() => (res ? res.actions.map((a) => ({ ...a, id: actionId(a) })) : []), [res]);
   const risk = res?.risk ?? null;
 
@@ -248,9 +282,9 @@ function TomorrowPlan() {
     if (!past || !res) return;
     let on = true;
     const acts = saved?.plan ? checkActions(saved) : actions;
-    checkPlan(date, asOf.slice(0, 13) + ":00", acts, saved?.plan ? "saved" : "suggested").then((r) => on && setChk(r));
+    checkPlan(date, asOf.slice(0, 13) + ":00", acts, saved?.plan ? "saved" : "suggested", site).then((r) => on && setChk(r));
     return () => { on = false; };
-  }, [past, date, savedSig, saved?.plan ? "" : shownSig, asOf.slice(0, 13)]);
+  }, [past, site, date, savedSig, saved?.plan ? "" : shownSig, asOf.slice(0, 13)]);
   const chkBy = useMemo(() => Object.fromEntries((chk?.steps ?? []).map((x) => [x.id, x])), [chk]);
   const sig = (xs: { id: string; setting: string; end: string }[]) => xs.map((a) => `${a.id}=${a.setting}@${a.end}`).join(";");
   const dirty = !saved?.plan || sig(saved.plan.actions) !== sig(actions);
@@ -259,7 +293,7 @@ function TomorrowPlan() {
 
   async function send(body: Record<string, unknown>) {
     setBusy(true); setErr("");
-    try { setSaved(await postPlan({ date, by: name.trim(), ...body })); }
+    try { setSaved(await postPlan({ date, site, by: name.trim(), ...body })); }
     catch (e) { setErr(String((e as Error).message ?? e)); }
     finally { setBusy(false); }
   }
@@ -277,7 +311,10 @@ function TomorrowPlan() {
     <>
       <div className="page-head">
         <div>
-          <h1>{past ? `Plan vs actual, ${date === today ? "today" : fmtD(date)}` : "Tomorrow's plan"}, Gurugram</h1>
+          <h1>{past ? `Plan vs actual, ${date === today ? "today" : fmtD(date)}` : "Tomorrow's plan"}, {SITE_NAME[site]}</h1>
+          <div className="btn-row" role="group" aria-label="Hotel" style={{ margin: "6px 0 8px" }}>
+            {PLAN_SITES.map((s) => <button key={s} className={`btn ${s === site ? "accent" : "ghost"}`} aria-pressed={s === site} onClick={() => setSite(s)}>{SITE_NAME[s]}</button>)}
+          </div>
           <p className="lead">{past ? "Each step of the day's plan, checked against the meters up to " + (live ? "now" : "the hour you are looking back at") + ". Followed steps count as verified savings; steps not followed show what they cost."
             : "Enter tomorrow's bookings. The forecast and the operating plan update as you type. Each step is a recommendation: approve it, skip it with a reason, or change its time. Nothing is switched automatically, and every decision is logged."}</p>
           {g && g.peak_kva != null && <span className="feed-note">Today so far: peak {n(g.peak_kva)} kVA at {String(g.peak_hour).padStart(2, "0")}:00 (live feed, simulated meters)</span>}
@@ -289,20 +326,21 @@ function TomorrowPlan() {
         </label>
       </div>
 
-      {day === undefined || (day && !form) ? <p className="muted">Loading the forecast…</p> : day === null ? <p className="muted">No forecast is prepared for {fmtD(date)} yet (plans cover the next few weeks).</p> : form && (<>
+      {base === undefined || (base && !form) ? <p className="muted">Loading the forecast…</p> : base === null ? <p className="muted">{site === "GGN" ? `No forecast is prepared for ${fmtD(date)} yet (plans cover the next few weeks).`
+        : `The planning service did not answer, and ${SITE_NAME[site]}'s plan comes from it only (its models are not in the browser). Try again in a minute.`}</p> : form && (<>
           <section className="panel" aria-labelledby="bk">
             <h2 id="bk" style={{ marginTop: 0 }}>Bookings for {title}</h2>
             <div className="grid g3 form3">
-              <Field label="Rooms occupied" value={form.rooms} suggested={day.defaults.rooms} touched={!!form.touched.rooms} max={220} onChange={(v) => set("rooms", v)} />
-              <Field label="Guests in house" value={form.guests} suggested={day.defaults.guests} touched={!!form.touched.guests} max={700} onChange={(v) => set("guests", v)} />
-              <Field label="Restaurant covers" value={form.covers} suggested={day.defaults.covers} touched={!!form.touched.covers} max={2000} onChange={(v) => set("covers", v)} />
+              <Field label="Rooms occupied" value={form.rooms} suggested={base.rooms} touched={!!form.touched.rooms} max={{ GGN: 220, JAI: 160, GOA: 140 }[site]} onChange={(v) => set("rooms", v)} />
+              <Field label="Guests in house" value={form.guests} suggested={base.guests} touched={!!form.touched.guests} max={700} onChange={(v) => set("guests", v)} />
+              <Field label="Restaurant covers" value={form.covers} suggested={base.covers} touched={!!form.touched.covers} max={2000} onChange={(v) => set("covers", v)} />
             </div>
-            <h3 style={{ margin: "18px 0 8px" }}>Banquet bookings</h3>
-            {form.bookings.length === 0 && <p className="muted small" style={{ marginTop: 0 }}>No banquet bookings entered. Last year's events on this date are not carried over.</p>}
+            <h3 style={{ margin: "18px 0 8px" }}>{site === "GGN" ? "Banquet bookings" : "Event bookings"}</h3>
+            {form.bookings.length === 0 && <p className="muted small" style={{ marginTop: 0 }}>No {site === "GGN" ? "banquet" : "event"} bookings entered. Last year's events on this date are not carried over.</p>}
             {form.bookings.map((b, i) => (
-              <BookingRow key={i} b={b} onChange={(x) => set("bookings", form.bookings.map((y, k) => (k === i ? x : y)))} onRemove={() => set("bookings", form.bookings.filter((_, k) => k !== i))} />
+              <BookingRow key={i} b={b} venues={VENUES[site]} onChange={(x) => set("bookings", form.bookings.map((y, k) => (k === i ? x : y)))} onRemove={() => set("bookings", form.bookings.filter((_, k) => k !== i))} />
             ))}
-            <button className="btn ghost" style={{ marginTop: 6 }} onClick={() => set("bookings", [...form.bookings, { hall: "A", start: "09:00", end: "18:00", guests: 150 }])}>+ Add a booking</button>
+            <button className="btn ghost" style={{ marginTop: 6 }} onClick={() => set("bookings", [...form.bookings, NEW_BOOKING[site]])}>+ Add a booking</button>
             <label className="field" style={{ marginTop: 16 }}>
               <span className="small muted">Notes for the duty team</span>
               <textarea rows={2} value={form.notes} onChange={(e) => set("notes", e.target.value)} placeholder="e.g. VIP arrival 15:00, laundry short-staffed" />
@@ -310,10 +348,10 @@ function TomorrowPlan() {
             <p className="small muted" style={{ marginBottom: 0 }}>Weather: {res ? `${res.weather || "typical temperatures for this date"}, top ${Math.round(Math.max(...res.forecast.temp))} °C` : "checking…"}. Rooms and covers are suggested from the usual pattern for this time of year.</p>
           </section>
 
-          {!res ? <p className="muted" style={{ marginTop: 18 }}>Working out the plan…</p> : (<>
+          {!res ? <p className="muted" style={{ marginTop: 18 }}>{planErr && !planning ? `The plan could not be worked out: ${planErr}` : "Working out the plan…"}</p> : (<>
 
           <h2>Forecast</h2>
-          <ForecastCharts kw={res.forecast.kw} kva={res.forecast.kva} tr={res.forecast.tr} />
+          <ForecastCharts kw={res.forecast.kw} kva={res.forecast.kva} tr={res.forecast.tr} site={site} />
 
           <div className="section-title plan-head">
             <div>
@@ -347,28 +385,32 @@ function TomorrowPlan() {
             ))}
           </ol>
           {!name.trim() && <p className="small muted">Enter your name above to approve, skip or change steps. It is kept on this device.</p>}
-          <p className="small muted">Savings compare this plan with how the hotel ran on matched days last year (same month, same kind of day, similar cooling load), at today's tariff. Plan savings are counted separately from the waste alerts.</p>
+          <p className="small muted">Savings compare this plan with how the hotel ran on matched days last year (same month, same kind of day, similar cooling load), at today's tariff. Plan savings are counted separately from the waste alerts.
+            {site !== "GGN" && ` ${SITE_NAME[site]} has no chilled-water setpoint meter or per-chiller meters: the setpoint step is shown but never counted${res.not_counted_inr ? ` (about ${inr(res.not_counted_inr)} by the guide's rule)` : ""}, and staging is checked by total kW per TR.`}
+            {res.cv_rmse_pct && ` Model accuracy (hourly CV(RMSE), leave-one-month-out on the original year): kW ${res.cv_rmse_pct.kw} %, cooling ${res.cv_rmse_pct.tr} %, peak kVA ${res.cv_rmse_pct.kva} %.`}</p>
 
-          {risk && idx && (
+          {risk && (site !== "GGN" || idx) && (
             <>
               <h2>Peak demand risk</h2>
               <div className={`banner compact ${risk.level === "BREACH RISK" ? "breach" : risk.level === "WARNING" ? "warn" : risk.level === "OK" ? "ok" : ""}`}>
                 <div className="peak-card">
-                  <Gauge value={risk.peak} max={1000} label={`${Math.round(risk.peak / 10)}%`} sub="of the limit" />
+                  <Gauge value={risk.peak} max={L.cd} label={`${Math.round((risk.peak / L.cd) * 100)}%`} sub="of the limit" />
                   <div>
                     <div style={{ fontSize: 19, fontWeight: 700 }}>{HEAD[risk.level]}</div>
-                    <div className="small" style={{ color: "var(--ink-2)", maxWidth: "62ch" }}>Expected peak about {n(risk.peak)} kVA around {risk.hour}:00 (limit 1,000 kVA).{" "}
-                      {risk.stack >= 1000 ? `If laundry, water heating and banquet cooling all run that afternoon, it could reach ${n(risk.stack)} kVA.` : "Even if the flexible loads overlap it stays under the limit."}</div>
+                    <div className="small" style={{ color: "var(--ink-2)", maxWidth: "62ch" }}>Expected peak about {n(risk.peak)} kVA around {risk.hour}:00 (limit {n(L.cd)} kVA).{" "}
+                      {site !== "GGN" ? `A demand step is planned only if the forecast comes within 8 % of the limit (${n(L.warn)} kVA).`
+                        : risk.stack >= 1000 ? `If laundry, water heating and banquet cooling all run that afternoon, it could reach ${n(risk.stack)} kVA.` : "Even if the flexible loads overlap it stays under the limit."}</div>
                   </div>
                 </div>
               </div>
               <div className="grid g4" style={{ margin: "12px 0" }}>
                 <div className="stat"><span>Expected peak</span><b>{n(risk.peak)} kVA</b><em>around {risk.hour}:00</em></div>
-                <div className="stat"><span>Chance of going over 1,000 kVA</span><b>{risk.p_exceed == null ? "—" : `${Math.round(risk.p_exceed * 100)}%`}</b><em>from how past forecasts turned out</em></div>
+                <div className="stat"><span>Chance of going over {n(L.cd)} kVA</span><b>{risk.p_exceed == null ? "—" : `${Math.round(risk.p_exceed * 100)}%`}</b><em>from how past forecasts turned out</em></div>
                 <div className="stat"><span>On a bad day</span><b>{n(risk.upper)} kVA</b><em>9 days out of 10 stay below this</em></div>
-                <div className="stat"><span>If flexible loads overlap</span><b style={{ color: risk.stack >= 1000 ? "var(--red)" : undefined }}>{n(risk.stack)} kVA</b><em>adds {n(idx.risk.stack_increment)} kVA</em></div>
+                {site === "GGN" && idx ? <div className="stat"><span>If flexible loads overlap</span><b style={{ color: risk.stack >= 1000 ? "var(--red)" : undefined }}>{n(risk.stack)} kVA</b><em>adds {n(idx.risk.stack_increment)} kVA</em></div>
+                  : <div className="stat"><span>Demand step line</span><b>{n(L.warn)} kVA</b><em>8 % below the contract</em></div>}
               </div>
-              <details className="more-info"><summary>Why: what piled up on the days the limit was broken</summary>
+              {site === "GGN" && idx && <details className="more-info"><summary>Why: what piled up on the days the limit was broken</summary>
                 <table className="t" style={{ marginTop: 8 }}>
                   <thead><tr><th>Load</th><th className="r">Drew</th><th className="r">Normally</th><th className="r">Extra</th></tr></thead>
                   <tbody>{idx.risk.stack_table.map((s) => (
@@ -376,7 +418,7 @@ function TomorrowPlan() {
                   ))}</tbody>
                 </table>
                 <p className="tech">Based on the {idx.risk.stack_basis}. Use "Look back" at the top to see the warning the day before each of those days.</p>
-              </details>
+              </details>}
             </>
           )}
         </>)}

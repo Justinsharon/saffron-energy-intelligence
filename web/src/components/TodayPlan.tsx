@@ -2,18 +2,19 @@ import { TAG } from "../plan";
 import type { DayCheck } from "../dayCheck";
 import type { CheckStep } from "../planApi";
 import { inr } from "../format";
+import { SITE_NAME } from "../data";
 
 const hourOf = (t: string) => Number(t.slice(0, 2)) + (t.includes("next day") ? 24 : 0);
 const BADGE: Record<string, string> = { Followed: "ok", Partly: "", "Not followed": "bad", Skipped: "", "Not yet due": "" };
 const span = (start: string, end: string, h: number, s: number) =>
   `${s <= h ? "now" : start.replace(" (next day)", "")}–${end === "00:00 (next day)" ? "midnight" : end.replace(" (next day)", "⁺¹")}`;
 
-/** Today's operating plan (Gurugram): what is due next, what is approved, and - checked against the meters up to the hour shown - which
+/** Today's operating plan (the hotel selected on Today; Gurugram when all are shown): what is due next, what is approved, and - checked against the meters up to the hour shown - which
  *  steps were followed. With no saved plan, the suggested plan is shown and checked, clearly marked as not approved. */
 export function TodayPlanCard({ now, dc, onPlan }: { now: string; dc: DayCheck | undefined; onPlan: () => void }) {
   if (dc === undefined || now.slice(0, 10) < "2026-10-02") return null;
   const v = dc.view, chk = dc.check;
-  const head = <div className="section-title" style={{ marginTop: 8 }}><h2>Today's plan, Gurugram</h2><button className="btn ghost" onClick={onPlan}>Tomorrow's plan</button></div>;
+  const head = <div className="section-title" style={{ marginTop: 8 }}><h2>Today's plan, {SITE_NAME[dc.site]}</h2><button className="btn ghost" onClick={onPlan}>Tomorrow's plan</button></div>;
   const h = Number(now.slice(11, 13)) + Number(now.slice(14, 16)) / 60;
   const steps: (CheckStep & { s: number; e: number })[] = (chk?.steps ?? []).map((x) => ({ ...x, s: hourOf(x.start), e: hourOf(x.end) }));
   const decision = (id: string) => v?.decisions[id]?.event;
@@ -47,7 +48,7 @@ export function TodayPlanCard({ now, dc, onPlan }: { now: string; dc: DayCheck |
   );
   if (!v?.plan) {
     return (<>{head}<div className="panel flat today-plan">
-      <p style={{ margin: 0 }}><strong>No plan was saved for today.</strong> Plans are made the day before: enter the bookings on <button className="ask-inline" onClick={onPlan}>Tomorrow's plan</button> and approve the steps, so the night shift knows how to run the chillers, laundry and water heating.</p>
+      <p style={{ margin: 0 }}><strong>No plan was saved for today.</strong> Plans are made the day before: enter the bookings on <button className="ask-inline" onClick={onPlan}>Tomorrow's plan</button> and approve the steps, so the night shift knows how to run the chillers, laundry and {dc.site === "GGN" ? "water heating" : dc.site === "GOA" ? "pool pumps" : "event lighting"}.</p>
       {steps.length > 0 && <p className="small muted" style={{ margin: "10px 0 0" }}>The suggested plan (usual pattern, no bookings), shown for reference only: not approved, so not checked or counted.</p>}
       {steps.length > 0 && rows}
       {summary}

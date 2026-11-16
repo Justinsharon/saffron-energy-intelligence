@@ -10,6 +10,8 @@ export interface LogRow { at: string; by: string; event: "submit" | "approve" | 
 export interface Entry { versions: Version[]; log: LogRow[] }
 export interface PlanView { date: string; storage: "gist" | "device"; plan: Version | null; decisions: Record<string, LogRow>; edits: Record<string, { start: string; end: string; by: string; at: string; reason?: string }>; log: LogRow[] }
 
+/** Storage key: Gurugram plans keep their date key (plans saved before Jaipur and Goa had plans); the others are "<date>@<SITE>". */
+export const planKey = (date: string, site: string = "GGN") => (site === "GGN" ? date : `${date}@${site}`);
 export const istStamp = () => new Date(Date.now() + 5.5 * 3.6e6).toISOString().slice(0, 16).replace("T", " ");
 const HH = /^\d{2}:00( \(next day\))?$/;
 
@@ -22,6 +24,9 @@ export function applyEvent(entry: Entry | undefined, body: Record<string, any>, 
   if (ev === "submit") {
     const actions = (body.actions ?? []) as SavedAction[];
     if (!Array.isArray(actions) || !actions.length) throw new Error("The plan has no actions.");
+    const site = String(body.site ?? "GGN");
+    if (!["GGN", "JAI", "GOA"].includes(site)) throw new Error("Unknown hotel.");
+    for (const a of actions) if ((a.site ?? "GGN") !== site) throw new Error("The plan's steps are for another hotel.");
     validate(actions);                                  // the same guardrails as the plan engine: never store a plan that breaks one
     const n = e.versions.length + 1;
     const total = actions.reduce((s, a) => s + (Number(a.saving_inr) || 0), 0);

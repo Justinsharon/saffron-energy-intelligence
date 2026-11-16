@@ -22,6 +22,13 @@ PEAK = (18, 22)                                       # GGN peak tariff window [
 OFFPEAK = (23, 5)                                     # GGN off-peak window (wraps midnight)
 DEMAND_WATCH_KVA, CD_KVA = 920.0, 1000.0              # EV-throttle / laundry line, contract demand
 LAUNDRY_KW, WATER_KW = 95.0, 80.0                     # connected kW (equipment register)
+# Jaipur / Goa: the guardrail line for two chillers = the smaller unit's capacity in each hotel's register (ACH-1/2: 2 × 200 TR, 2 × 150 TR).
+# Kept here too so a saved plan can be re-checked without the model files; tests/test_site_plan.py checks it against the register.
+TWO_MIN_TR = {"GGN": CH3_MAX, "JAI": 200.0, "GOA": 150.0}
+FILTRATION_MIN_H = 8                                  # CONTEXT.md §9: pool filtration >= 8 h a day
+ONE_MARGIN = 0.90                                     # Jaipur / Goa: one chiller up to its capacity minus 10 %
+DEMAND_STEP_FRAC = 0.92                               # Jaipur / Goa: a demand step only if the forecast comes within 8 % of the contract
+LIGHT_LEAD_MIN = 30                                   # event lighting on 30 min before the booking, off 30 min after
 AHU = {"A": "AHU-BQ-A", "B": "AHU-BQ-B", "A+B": "AHU-BQ-A and AHU-BQ-B"}
 EXCLUDED = ("kitchen exhaust", "exhaust", "make-up air", "thermostat", "guest room", "guest-room", "lift", "elevator", "fire", "life-safety", "life safety")
 
@@ -132,10 +139,15 @@ def compose_day(day: dict, rooms=None, covers=None, tmax=None, bookings=(), gues
 
 
 # ---- the plan ------------------------------------------------------------------------------------------------------------
-def plan_day(hourly_tr, hourly_kva, temp_c, bookings, pf, ref=None, tariff=None) -> list:
-    """Timed actions for one day. ref: matched-day behaviour from last year (tools/export_plan_inputs.py); tariff: ₹ rates."""
+def plan_day(hourly_tr, hourly_kva, temp_c, bookings, pf, ref=None, tariff=None, site: str = "GGN", cfg: dict | None = None) -> list:
+    """Timed actions for one day. ref: matched-day behaviour from last year (tools/export_plan_inputs.py; Jaipur / Goa:
+    tools/train_api_models.py); tariff: ₹ rates; cfg: the hotel's own equipment, venues and tariff windows (Jaipur / Goa only)."""
     if ref is None or tariff is None:
         raise ValueError("plan_day needs ref (last year's matched-day behaviour) and tariff")
+    if site != "GGN":
+        if cfg is None:
+            raise ValueError(f"plan_day for {site} needs the hotel's config (models/meta.json sites.{site}.config)")
+        return plan_site(site, cfg, hourly_tr, hourly_kva, temp_c, bookings, pf, ref, tariff)
     rate = (tariff["energy"] + tariff["fsa"] + tariff["duty"]) / pf          # ₹ per kWh at the margin
     acts = []
     st = [stage(x) for x in hourly_tr]
@@ -212,8 +224,9 @@ def plan_day(hourly_tr, hourly_kva, temp_c, bookings, pf, ref=None, tariff=None)
     return acts
 
 
-def validate(acts: list) -> None:
-    """Guardrails (CLAUDE.md, brief §9). Raises on any breach: excluded equipment, setpoint below 6.5 °C, two chillers below 130 TR, AHU on > 2 h early."""
+def validate(acts: list, cfg: dict | None = None) -> None:
+    """Guardrails (CLAUDE.md, brief §9). Raises on any breach: excluded equipment, setpoint below 6.5 °C, two chillers below 130 TR
+    (Jaipur / Goa: below the smaller chiller's capacity), AHU on > 2 h early, pool filtration under the daily minimum."""
     for a in acts:
         text = (a["equipment"] + " " + a["setting"]).lower()
         bad = [w for w in EXCLUDED if w in text]
@@ -224,8 +237,13 @@ def validate(acts: list) -> None:
                 raise ValueError(f"setpoint below {CHW_FLOOR} °C: {a['setting']}")
         if a["group"] == "chw" and a["setpoint_c"] < CHW_FLOOR:
             raise ValueError("setpoint below 6.5 °C")
-        if a["group"] == "chillers" and "together" in a["setting"] and a["min_tr"] < CH3_MAX:
-            raise ValueError(f"two chillers planned at {a['min_tr']:.0f} TR (< 130)")
+        two_min = TWO_MIN_TR.get(a.get("site", "GGN"), CH3_MAX)
+        if cfg is not None and a.get("site", "GGN") != "GGN":
+            two_min = min(cfg["chillers"]["units_tr"])
+        if a["group"] == "chillers" and "together" in a["setting"] and a["min_tr"] < two_min:
+            raise ValueError(f"two chillers planned at {a['min_tr']:.0f} TR (< {two_min:.0f})")
+        if a["group"] == "pool" and a.get("run_hours", 99) < FILTRATION_MIN_H:
+            raise ValueError(f"pool filtration planned for {a.get('run_hours')} h (< {FILTRATION_MIN_H} h a day)")
         if a["group"] == "ahu" and a["start_h"] - a["on_h"] > 2:
             raise ValueError("banquet AHU on more than 2 h before the event")
         if not math.isfinite(a["saving_inr"]):
@@ -243,3 +261,152 @@ def risk_for(kva: list, cal: dict) -> dict:
     level = ("BREACH RISK" if upper >= cal["cd"] or stack >= cal["cd"] else "WARNING" if upper >= cal["warn"]
              else "STACKING WATCH" if stack >= cal["watch_frac"] * cal["cd"] else "OK")
     return dict(raw_peak_kva=raw, hour=hour, peak_kva=peak, upper_kva=upper, stack_kva=stack, p_exceed=p, level=level)
+
+
+# ---- Jaipur and Goa: only levers their sub-meters can size and later check ------------------------------------------------------
+# sub_jai_goa_hourly has total chillers_kw and chiller_load_tr (no per-chiller split, no CHW setpoint), lighting_kw, pumps_pool_kw and
+# laundry_kw. So: chiller staging (checked by total kW per TR), CHW setpoint (shown, never counted: no setpoint meter), event lighting,
+# pool filtration (where the register has pool pumps), laundry timing and a demand watch. Every hotel fact comes from cfg (the hotel's
+# own register, events calendar and tariff rows; tools/train_api_models.py).
+def hm(minutes: int) -> str:
+    """Minutes from the day's midnight -> 'HH:MM', with ' (next day)' past midnight."""
+    return f"{(minutes // 60) % 24:02d}:{minutes % 60:02d}" + (" (next day)" if minutes >= 24 * 60 else "")
+
+
+def booking_minutes(b: dict) -> tuple:
+    """(start, end) in minutes from midnight; 23:59 = past midnight, taken as 01:00 next day (as the baseline); end <= start = next day."""
+    s = int(b["start"][:2]) * 60 + int(b["start"][3:5])
+    e = 25 * 60 if b["end"] == "23:59" else int(b["end"][:2]) * 60 + int(b["end"][3:5])
+    if e <= s:
+        e += 24 * 60
+    return s, e
+
+
+def curve_at(tr: float, curve: dict) -> float:
+    for hi, v in zip(curve["edges"][1:], curve["values"]):
+        if tr <= hi:
+            return v
+    return curve["values"][-1]
+
+
+def site_stage(tr: float, units: list) -> str:
+    """'one': within one chiller's capacity minus 10 %; 'one-full': above that but below the smaller unit's capacity, where two chillers
+    are not allowed (never two below the smaller unit's capacity), so one runs near full with the second on standby; 'two' otherwise."""
+    if tr <= ONE_MARGIN * max(units):
+        return "one"
+    return "one-full" if tr < min(units) else "two"
+
+
+def site_guard(cfg: dict) -> dict:
+    u, ch = cfg["chillers"]["units_tr"], cfg["chillers"]
+    pool = cfg.get("pool")
+    return {
+        "chillers": (f"Recommendation only: the duty engineer stages {ch['id']} ({ch['rating']}). One chiller up to {ONE_MARGIN * max(u):.0f} TR "
+                     f"(capacity minus 10 %); never two chillers below {min(u):.0f} TR."),
+        "chw": f"Recommendation only. Never below {CHW_FLOOR} °C leaving water. Go back to 7.0 °C at once if a guest area runs warm (guest rooms 22–25 °C).",
+        "lighting": "Recommendation only: the banquet team switches the event lighting (timer). Safety, path and emergency lighting stay on.",
+        "pool": (f"Recommendation only. Filtration runs at least {pool['min_hours']} h every day for water quality; never less." if pool else ""),
+        "laundry": "Recommendation only: the laundry supervisor schedules batches. Flexible load; no effect on guests.",
+        "demand": "Recommendation only: a person decides what to hold back. Never kitchen exhaust, guest-room thermostats, lifts or fire / life-safety.",
+    }
+
+
+def plan_site(site, cfg, hourly_tr, hourly_kva, temp_c, bookings, pf, ref, tariff) -> list:
+    rate = (tariff["energy"] + tariff["fsa"] + tariff["duty"]) / pf          # ₹ per kWh at the margin
+    G, units, ch = site_guard(cfg), cfg["chillers"]["units_tr"], cfg["chillers"]
+    curve, peak, off, cd = ref["curve"], tuple(cfg["peak"]), tuple(cfg["offpeak"]), cfg["cd_kva"]
+    acts = []
+    base = dict(kind="plan", site=site)
+
+    # chillers: staging bands from the register; ₹ = last year's matched-day hours at poor kW/TR (two chillers on a light load)
+    st = [site_stage(x, units) for x in hourly_tr]
+    for s, e, key in windows(["two" if x == "two" else "one" for x in st]):
+        trs = hourly_tr[s:e]
+        lo, hi = min(trs), max(trs)
+        full = [h for h in range(s, e) if st[h] == "one-full"]
+        sav = sum(ref["poor_kwh_ly"][h] for h in range(s, e)) * rate if key == "one" else 0.0
+        one = f"{ch['id'].replace('/', ' or ACH-')}, {max(units):.0f} TR"
+        if key == "two":
+            setting, why = "Both chillers together (ACH-1 + ACH-2)", f"Cooling load {lo:.0f}–{hi:.0f} TR needs both chillers."
+        else:
+            setting = f"One chiller only ({one})" + ("; near full load at times, second on standby" if full else "")
+            why = (f"Cooling load {lo:.0f}–{hi:.0f} TR stays within one chiller ({ONE_MARGIN * max(units):.0f} TR with a 10 % margin"
+                   + (f"; {len(full)} h between that and {min(units):.0f} TR, where two chillers are not run: keep one near full load and the second ready" if full else "")
+                   + "). Last year on similar days " + (f"the plant ran at poor kW per TR (two chillers sharing a light load) for about {sum(ref['poor_kwh_ly'][h] for h in range(s, e)):.0f} kWh in these hours."
+                                                       if sav > 0 else "the plant held its normal kW per TR in these hours."))
+        if hi > sum(units):
+            why += f" Forecast load is above what both chillers can carry ({sum(units):.0f} TR): expect warm spaces; plan comfort messaging."
+        acts.append(dict(base, group="chillers", start=hh(s), end=hh(e), equipment=f"Chillers ({ch['id']}, {ch['description'].lower()})", setting=setting,
+                         reason=why + " Can't verify the exact chiller from meters; checked by total kW per TR.", saving_inr=sav,
+                         guardrail=G["chillers"], min_tr=lo, max_tr=hi, verifiable="total kW per TR"))
+
+    # CHW setpoint: 7.0 °C, 8.0 °C when outdoor < 24 °C and one chiller carries the load; never < 6.5 °C. No setpoint meter: shown, not counted
+    sp = [CHW_RESET if (temp_c[h] < RESET_BELOW_C and st[h] == "one") else CHW_STD for h in range(24)]
+    for s, e, v in windows(sp):
+        est = sum(hourly_tr[h] * curve_at(hourly_tr[h], curve) * SETPOINT_PCT_PER_C * (v - CHW_STD) for h in range(s, e)) * rate
+        why = (f"Outdoor {min(temp_c[s:e]):.0f}–{max(temp_c[s:e]):.0f} °C and one chiller carrying the load: warmer chilled water still holds comfort."
+               if v > CHW_STD else "Standard setting: outdoor 24 °C or warmer, or the load needs more than one chiller at its margin.")
+        why += (f" The guide's ~3.5 % per °C would put this at about ₹{est:,.0f}, but there is no setpoint meter here, so it is not verifiable and is "
+                "not counted in any ₹ total." if v > CHW_STD else " No setpoint meter here: not verifiable.")
+        acts.append(dict(base, group="chw", start=hh(s), end=hh(e), equipment="Chilled-water supply setpoint", setting=f"{v:.1f} °C", reason=why,
+                         saving_inr=0.0, estimate_inr=est, counted=False, guardrail=G["chw"], setpoint_c=v, verifiable="not verifiable (no setpoint meter)"))
+
+    # event lighting: on 30 min before each booking, off 30 min after; ₹ = last year's lighting left on after events at that venue
+    for bk in bookings:
+        v = cfg["venues"][bk["hall"]]
+        s, e = booking_minutes(bk)
+        on, offm = max(0, s - LIGHT_LEAD_MIN), e + LIGHT_LEAD_MIN
+        lt = v.get("lighting")
+        equip = f"Event lighting, {bk['hall']}" + (f" ({lt['id']}, {lt['kw']:.0f} kW)" if lt else f" (about {v['event_kw']:.0f} kW on the lighting sub-meter)")
+        ly = v["left_on_kwh"]
+        acts.append(dict(base, group="lighting", start=hm(on), end=hm(offm), equipment=equip, setting=f"On at {hm(on)}, off at {hm(offm)}",
+                         reason=(f"Event at {bk['hall']} {bk['start']}–{bk['end']} ({bk['guests']} guests): lights on 30 min before, off 30 min after. "
+                                 + (f"Last year the lighting stayed on after {v['events_left_on']} of {v['events']} events here, about {ly:.0f} kWh per event on average."
+                                    if ly > 0 else f"Last year's {v['events']} events here switched off on time; this keeps it that way.")),
+                         saving_inr=ly * rate, guardrail=G["lighting"], venue=bk["hall"], on_min=on, off_min=offm))
+
+    # pool filtration (only where the register lists pool pumps): last year's usual schedule, never under the daily minimum
+    pool = cfg.get("pool")
+    if pool:
+        hrs = pool["schedule"]["hours"]
+        runs = [(a, b) for a, b, v in windows([h in hrs for h in range(24)]) if v]
+        n = len(hrs)
+        if n < pool["min_hours"]:                                  # never below the daily filtration hours
+            hrs = list(range(hrs[0] if hrs else 7, (hrs[0] if hrs else 7) + pool["min_hours"]))
+            runs, n = [(hrs[0], hrs[-1] + 1)], len(hrs)
+        txt = ", ".join(f"{hh(a)}–{hh(b)}" for a, b in runs)
+        acts.append(dict(base, group="pool", start=hh(runs[0][0]), end=hh(runs[-1][1]), equipment=f"Pool filtration pumps ({pool['id']}, {pool['rating']})",
+                         setting=f"Run filtration {txt} ({n} h); off the rest of the day",
+                         reason=(f"The usual schedule on last year's normal days: {n} h at about {pool['schedule']['kw']:.0f} kW (at least {pool['min_hours']} h for water quality). "
+                                 + (f"On similar days last year the pumps ran about {ref.get('pool_outside_kwh', 0):.0f} kWh outside the schedule."
+                                    if ref.get("pool_outside_kwh", 0) > 0 else "Last year's similar days kept to it.")),
+                         saving_inr=ref.get("pool_outside_kwh", 0.0) * rate, guardrail=G["pool"], run_hours=n))
+
+    # laundry: out of the hotel's own peak window and out of hours near the contract; Goa: best in its off-peak window
+    watch = DEMAND_STEP_FRAC * cd
+    lkw = cfg["laundry"]["kw"]
+    blocked = [in_win(h, peak) or hourly_kva[h] + lkw / pf > watch for h in range(24)]
+    ok = [(s, e) for s, e, v in windows(blocked) if not v]
+    by_demand = [h for h in range(24) if blocked[h] and not in_win(h, peak)]
+    if ok:
+        txt = ", ".join(f"{hh(s)}–{hh(e)}" for s, e in ok)
+        offp = f"; best {hh(off[0])}–{hh(off[1])} (off-peak rebate)" if site == "GOA" else ""
+        acts.append(dict(base, group="laundry", start=hh(ok[0][0]), end=hh(ok[-1][1]), equipment=f"Laundry ({cfg['laundry']['kw']:.0f} kW connected)",
+                         setting=f"Run batches only {txt}{offp}",
+                         reason=(f"Keep laundry out of the {hh(peak[0])}–{hh(peak[1])} peak tariff" + (f" and out of {len(by_demand)} hour(s) near the contract demand" if by_demand else "")
+                                 + (f". Off-peak {hh(off[0])}–{hh(off[1])} also earns the rebate where the team can run night batches" if site == "GOA" else "")
+                                 + f". Last year on similar days about {ref['laundry_peak_kwh']:.0f} kWh of laundry ran in the peak window."),
+                         saving_inr=ref["laundry_peak_kwh"] / pf * tariff["peak"], guardrail=G["laundry"]))
+
+    # demand: watch only; a step only if the forecast comes within 8 % of the contract
+    near = [hourly_kva[h] >= watch for h in range(24)]
+    for s, e, v in windows(near):
+        if not v:
+            continue
+        pk = max(hourly_kva[s:e])
+        acts.append(dict(base, group="demand", start=hh(s), end=hh(e), equipment="Flexible loads (laundry, event set-up)",
+                         setting=f"Hold flexible loads while demand is above {watch:,.0f} kVA",
+                         reason=f"Site demand forecast up to {pk:,.0f} kVA, within 8 % of the {cd:,.0f} kVA contract. Watch only: no ₹ is claimed.",
+                         saving_inr=0.0, guardrail=G["demand"]))
+    validate(acts, cfg)
+    return acts

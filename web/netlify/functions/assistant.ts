@@ -19,7 +19,7 @@ import hJAI from "./data/live_feed/hourly_JAI.json";
 import hGOA from "./data/live_feed/hourly_GOA.json";
 import { feedFor, istNow as istNowFull, issued } from "../../src/feedcore";
 import { byTime, planFor, type PlanDay } from "../../src/plan";
-import { view, type Entry } from "../../src/planlog";
+import { checkActions, planKey, view, type Entry } from "../../src/planlog";
 import { configured as gistReady, readJSON } from "../lib/gist";
 import days from "./data/forecast_days.json";
 import whatif from "./data/forecast_whatif.json";
@@ -135,9 +135,13 @@ const TOOLS: Record<string, { fn: (a: J) => J | Promise<J>; desc: string; params
     },
   },
   operating_plan: {
-    desc: "Gurugram operating plan for today, tomorrow or a date up to two weeks ahead: timed steps for the chillers, chilled-water setting, banquet air handlers, laundry, water heating and EV chargers, each with its ₹ saving and whether it has been approved. If the team has not saved a plan for that day, returns the suggested plan for the usual bookings.",
-    params: { day: "string: today / tomorrow / YYYY-MM-DD, optional (default tomorrow)", part_of_day: "string: morning / afternoon / evening / night, optional" },
+    desc: "Operating plan for one hotel (Gurugram, Jaipur or Goa) for today, tomorrow or a date up to two weeks ahead: timed steps (Gurugram: chillers, chilled-water setting, banquet air handlers, laundry, water heating, EV chargers; Jaipur / Goa: chiller staging, chilled-water setting (shown, not counted: no setpoint meter), event lighting, pool filtration (Goa), laundry, demand watch), each with its ₹ saving and whether it has been approved. If the team has not saved a plan for that day, returns the suggested plan for the usual bookings.",
+    params: { day: "string: today / tomorrow / YYYY-MM-DD, optional (default tomorrow)", part_of_day: "string: morning / afternoon / evening / night, optional",
+              hotel: "string: GGN / JAI / GOA or the hotel's name, optional (default Gurugram)" },
     fn: async (a) => {
+      const hs = String(a.hotel ?? "GGN").toUpperCase();
+      const site = hs.startsWith("JAI") ? "JAI" : hs.startsWith("GOA") ? "GOA" : "GGN";
+      const hotel = SITES[site as keyof typeof SITES];
       const today = istToday();
       const raw = String(a.day ?? "tomorrow").toLowerCase();
       const date = /^\d{4}-\d{2}-\d{2}$/.test(raw) ? raw : raw.startsWith("today") || raw === "tonight" ? today : addDays(today, 1);
@@ -146,26 +150,28 @@ const TOOLS: Record<string, { fn: (a: J) => J | Promise<J>; desc: string; params
       const hr = (t: string) => Number(t.slice(0, 2)) + (t.includes("next day") ? 24 : 0);
       const overlaps = (s: string, e: string) => !part || (hr(s) < part[1] && hr(e) > part[0]) || (part[0] === 22 && hr(s) < 6);
       let saved = null as ReturnType<typeof view> | null;
-      if (gistReady()) { try { saved = view(date, (await readJSON<Record<string, Entry>>("plans.json", {}))[date], "gist"); } catch { saved = null; } }
+      if (gistReady()) { try { saved = view(date, (await readJSON<Record<string, Entry>>("plans.json", {}))[planKey(date, site)], "gist"); } catch { saved = null; } }
       if (saved?.plan) {
         const p = saved.plan;
         const steps = p.actions.map((x) => { const ed = saved!.edits[x.id]; const d = saved!.decisions[x.id];
           return { from: ed?.start ?? x.start, to: ed?.end ?? x.end, what: x.equipment, setting: x.setting, why: x.reason, saving_inr: r0(x.saving_inr),
                    status: d?.event === "approve" ? `approved by ${d.by}` : d?.event === "skip" ? `skipped by ${d.by}: ${d.reason}` : "not yet approved", time_changed: !!ed }; });
-        return { hotel: "Gurugram", date, plan: `saved by ${p.by} at ${p.at}`, bookings: p.inputs.bookings, notes: p.inputs.notes || undefined,
+        return { hotel, date, plan: `saved by ${p.by} at ${p.at}`, bookings: p.inputs.bookings, notes: p.inputs.notes || undefined,
                  total_saving_inr: r0(p.total_inr), steps: steps.filter((x) => overlaps(x.from, x.to)), part_of_day: a.part_of_day || undefined };
       }
       // not saved: the same source as the page - the plan API (models on the usual inputs), else the browser rules on the exported inputs
-      const suggest = (src: string, actions: J[], total: number, extra: J) => ({ hotel: "Gurugram", date,
-        plan: `not saved yet: this is the suggested plan for the usual rooms and covers, with no banquet bookings entered (${src})`, total_saving_inr: r0(total),
-        steps: byTime(actions as any).filter((x) => overlaps(x.start, x.end)).map((x) => ({ from: x.start, to: x.end, what: x.equipment, setting: x.setting, why: x.reason, saving_inr: r0(x.saving_inr), status: "suggested" })),
+      const suggest = (src: string, actions: J[], total: number, extra: J) => ({ hotel, date,
+        plan: `not saved yet: this is the suggested plan for the usual rooms and covers, with no ${site === "GGN" ? "banquet" : "event"} bookings entered (${src})`, total_saving_inr: r0(total),
+        steps: byTime(actions as any).filter((x) => overlaps(x.start, x.end)).map((x) => ({ from: x.start, to: x.end, what: x.equipment, setting: x.setting, why: x.reason, saving_inr: r0(x.saving_inr),
+          counted: x.counted === false ? false : undefined, status: "suggested" })),
         part_of_day: a.part_of_day || undefined, ...extra });
       try {
-        const r = await fetch(`${PLAN_API}/plan`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ date }), signal: AbortSignal.timeout(4000) });
+        const r = await fetch(`${PLAN_API}/plan`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ date, site }), signal: AbortSignal.timeout(4000) });
         const j = await r.json();
         if (r.status === 422) return { error: j.error };
         if (r.ok) return suggest("plan service", j.actions, j.total_saving_inr, { weather: j.inputs_used?.weather, how_inputs_were_read: j.notes });
-      } catch { /* fall back to the browser rules below */ }
+      } catch { /* fall back to the browser rules below (Gurugram only) */ }
+      if (site !== "GGN") return { error: `The planning service did not answer; ${hotel}'s plan comes from it only. Try again in a minute.` };
       let day: PlanDay;
       try { const r = await fetch(`${ORIGIN}/data/plan/${date}.json`); if (!r.ok) throw new Error(); day = await r.json(); }
       catch { return { error: `No plan inputs for ${date} (plans cover the next few weeks).` }; }
@@ -195,8 +201,19 @@ const TOOLS: Record<string, { fn: (a: J) => J | Promise<J>; desc: string; params
       const top = al.sort((x, y) => y.cost - x.cost).slice(0, 5).map((x) => ({ hotel: x.hotel, problem: WASTE[x.rule] ?? x.title, inr: r0(x.cost), status: x.end <= asOf ? "resolved" : "still running" }));
       let plan: J | null = null;
       if (m >= "2026-10") {
-        try { const r = await fetch(`${PLAN_API}/savings`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ month: m, as_of: asOf }), signal: AbortSignal.timeout(15000) });
-          if (r.ok) { const j = await r.json(); plan = { verified_inr: r0(j.totals.verified_inr), planned_inr: r0(j.totals.planned_inr), missed_inr: r0(j.totals.missed_inr), days: j.totals.days, note: j.honesty }; } } catch { plan = null; }
+        // all three hotels' plans (saved plans from the shared log, each hotel checked on its own meters), summed
+        let all: Record<string, Entry> = {};
+        if (gistReady()) { try { all = await readJSON<Record<string, Entry>>("plans.json", {}); } catch { all = {}; } }
+        const rs = await Promise.all(Object.keys(SITES).map(async (s) => {
+          const saved: Record<string, unknown[]> = {};
+          for (const [k, e] of Object.entries(all)) { const d = k.slice(0, 10); if (d.startsWith(m) && k === planKey(d, s)) { const x = checkActions(view(d, e, "gist")); if (x.length) saved[d] = x; } }
+          try { const r = await fetch(`${PLAN_API}/savings`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ month: m, site: s, as_of: asOf, saved }), signal: AbortSignal.timeout(15000) });
+            return r.ok ? [s, await r.json()] as const : null; } catch { return null; }
+        }));
+        const ok = rs.filter((x): x is readonly [string, J] => !!x);
+        if (ok.length) plan = { verified_inr: r0(ok.reduce((x, [, j]) => x + j.totals.verified_inr, 0)), planned_inr: r0(ok.reduce((x, [, j]) => x + j.totals.planned_inr, 0)),
+          missed_inr: r0(ok.reduce((x, [, j]) => x + j.totals.missed_inr, 0)), days: Math.max(...ok.map(([, j]) => j.totals.days)), note: ok[0][1].honesty,
+          hotels: ok.map(([s]) => SITES[s as keyof typeof SITES]), by_hotel: Object.fromEntries(ok.map(([s, j]) => [SITES[s as keyof typeof SITES], r0(j.totals.verified_inr)])) };
       }
       let optionC: J | null = null;
       if (m >= "2026-10") {
@@ -334,7 +351,7 @@ Don't mention the power factor by name; say "the capacitor panel fault made the 
 You only recommend; a person approves every action. Never suggest automatic control of kitchen exhaust, guest-room thermostats, lifts or life-safety,
 and never a chilled-water setpoint below 6.5 °C. Questions about tomorrow or a coming date use forecast_upcoming (real weather forecast). forecast_scenario is a what-if for a hot weekday in May; forecast_day is for past dates.
 Questions about right now, today, the latest readings or what is wrong at the moment use today_status (live feed, simulated meters, up to the current hour).
-Questions about what to set or do today or tomorrow (chillers, chilled water, laundry, water heating, banquet air handlers, EV chargers) use operating_plan; say whether the step is approved or only suggested.
+Questions about what to set or do today or tomorrow (chillers, chilled water, laundry, water heating, banquet air handlers, EV chargers, event lighting, pool pumps) use operating_plan with the hotel asked about (default Gurugram); say whether the step is approved or only suggested. For Jaipur and Goa the chilled-water step is never counted in ₹ (no setpoint meter).
 Requests to summarise or report a month (for the GM or finance) use monthly_report.`;
 const system = () => `${SYSTEM}\nNow is ${istNowFull().replace("T", " ")} (India). Meter data: Oct 2025 – Sep 2026 is the original sample year; from 1 Oct 2026 it is a live feed from simulated meters, available up to the current hour only. Bills are available once issued (5th of the following month); say so if asked about a later one.`;
 
@@ -366,9 +383,9 @@ function route(q: string): [string, J][] {
     if (m[2]) return `${m[2]}-${k}`;
     return [2027, 2026, 2025].map((y) => `${y}-${k}`).find((x) => have.has(x)) ?? `${Number(k) >= 10 ? 2025 : 2026}-${k}`;
   });
-  if (/chiller|chilled|setpoint|plan\b|laundry|water heat|air handler|ahu|ev charg|what should (i|we) (set|do|run)/.test(ql) && /tomorrow|today|tonight|morning|afternoon|evening|night/.test(ql) && !/bill/.test(ql)) {
+  if (/chiller|chilled|setpoint|plan\b|laundry|water heat|air handler|ahu|ev charg|lighting|pool|what should (i|we) (set|do|run)/.test(ql) && /tomorrow|today|tonight|morning|afternoon|evening|night/.test(ql) && !/bill/.test(ql)) {
     const part = ["morning", "afternoon", "evening", "night"].find((p) => ql.includes(p)) ?? (ql.includes("tonight") ? "night" : undefined);
-    return [["operating_plan", { day: ql.includes("tomorrow") ? "tomorrow" : "today", part_of_day: part }]];
+    return [["operating_plan", { day: ql.includes("tomorrow") ? "tomorrow" : "today", part_of_day: part, hotel: s }]];
   }
   const tm = ql.match(/(\d{2}(?:\.\d)?)\s*°?\s*c\b/);
   if (tm && (ql.includes("tomorrow") || ql.includes("what if"))) {
@@ -403,8 +420,8 @@ function template(calls: [string, J, J][]): string {
       : `${r.hotel}, ${x.month}: billed ${f(x.billed_total)}, which matches our meter.`);
     else if (n === "forecast_day" || n === "forecast_scenario" || n === "forecast_upcoming") { p.push(`${r.scenario ?? r.date}${r.top_temperature_c != null ? ` (top ${r.top_temperature_c} °C)` : ""}: expected peak ${r.forecast_peak_kva} kVA around ${r.peak_hour}:00 (limit 1,000 kVA); ${r.chance_above_1000_kva_pct}% chance of going over. If laundry, water heating and banquet cooling overlap that afternoon it could reach ${r.if_laundry_water_heating_and_banquet_cooling_overlap_kva} kVA.${r.shift_plan ? " Suggested moves:" : ""}`); for (const s of r.shift_plan ?? []) p.push(`- ${s.action} (frees about ${s.frees_up_kva} kVA)`); }
     else if (n === "operating_plan") {
-      p.push(`Gurugram plan for ${r.date}${r.part_of_day ? ` (${r.part_of_day})` : ""}: ${r.plan}.`);
-      for (const s of r.steps) p.push(`- ${s.from.replace(" (next day)", "")}–${s.to.replace("00:00 (next day)", "24:00").replace(" (next day)", "")}: ${s.what}: ${s.setting}${s.saving_inr >= 1 ? ` (saves about ${f(s.saving_inr)})` : ""}. ${s.status === "suggested" ? "Suggested." : s.status[0].toUpperCase() + s.status.slice(1) + "."}`);
+      p.push(`${r.hotel} plan for ${r.date}${r.part_of_day ? ` (${r.part_of_day})` : ""}: ${r.plan}.`);
+      for (const s of r.steps) p.push(`- ${s.from.replace(" (next day)", "")}–${s.to.replace("00:00 (next day)", "24:00").replace(" (next day)", "")}: ${s.what}: ${s.setting}${s.saving_inr >= 1 ? ` (saves about ${f(s.saving_inr)})` : s.counted === false ? " (not verifiable here, so not counted)" : ""}. ${s.status === "suggested" ? "Suggested." : s.status[0].toUpperCase() + s.status.slice(1) + "."}`);
       if (!r.steps.length) p.push("No steps fall in that part of the day.");
     }
     else if (n === "monthly_report") {
