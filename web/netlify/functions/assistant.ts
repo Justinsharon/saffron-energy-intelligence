@@ -94,7 +94,6 @@ function plainMeasure(m: string): string {
   if (m.startsWith("Hold PF")) return "upgrade the capacitor panel so the bill stops charging for wasted power";
   if (m.startsWith("Keep PF")) return "repair capacitor faults within hours";
   if (m.startsWith("Right-size")) return m.replace(/Right-size contract demand (\d[\d,]*) → (\d[\d,]*) kVA.*/, "lower the contracted power limit from $1 to $2 kVA");
-  if (m.startsWith("Dim")) return "dim corridor and outdoor lighting after midnight";
   if (m.startsWith("Avoid contract")) return "stay under the contracted power limit on hot afternoons";
   if (m.startsWith("Shift flexible")) return "move laundry, water heating and EV charging out of the evening peak";
   if (m.startsWith("CHW reset")) return "run chilled water at 8 °C on cool, quiet days";
@@ -323,14 +322,18 @@ const TOOLS: Record<string, { fn: (a: J) => J | Promise<J>; desc: string; params
     },
   },
   savings_plan: {
-    desc: "Sized savings measures (energy / ToD / demand) with safety notes. Two totals: from operations, and with one capital item (pump VFDs, needs investment).",
+    desc: "Sized savings measures (energy / ToD / demand / night base load) with safety notes. Two totals: from operations, and with one capital item (pump VFDs, needs investment). Includes the night base-load audit (00:00–05:00 per sub-meter channel vs its own good nights) with the night walk-round checklist.",
     params: {},
     fn: () => {
       const s = savings as J, t = s.totals as J;
       const by: J = {}; for (const m of s.measures) by[m.category] = r0((by[m.category] ?? 0) + m.inr);
       return { operations_inr: r0(t.operations_inr), operations_pct: t.operations_pct, with_capital_inr: r0(t.with_capital_inr), with_capital_pct: t.with_capital_pct,
         capital_item: "pump speed controls (VFDs): needs investment; payback needs a supplier quote", target_pct: "8-12", by_category_inr: by,
-        measures: s.measures.map((m: J) => ({ hotel: m.hotel, measure: plainMeasure(m.measure), kind: ({ Energy: "use less", ToD: "use at cheaper times", Demand: "lower peak charges", Capital: "needs investment" } as J)[m.category] ?? m.category, inr: r0(m.inr), how_sure: String(m.confidence).startsWith("High") ? "measured" : String(m.confidence).startsWith("Medium") ? "estimated" : "rough estimate", safety: m.safety, ...(m.payback ? { payback: m.payback } : {}) })) };
+        measures: s.measures.map((m: J) => ({ hotel: m.hotel, measure: plainMeasure(m.measure), kind: ({ Energy: "use less", ToD: "use at cheaper times", Demand: "lower peak charges", Capital: "needs investment", "Night base load (audit)": "use less at night (needs a night walk-round to confirm)" } as J)[m.category] ?? m.category, inr: r0(m.inr), how_sure: String(m.confidence).startsWith("High") ? "measured" : String(m.confidence).startsWith("Medium") ? "estimated" : "rough estimate", safety: m.safety, ...(m.payback ? { payback: m.payback } : {}) })),
+        night_base_load: s.night ? { hours: s.night.hours, method: s.night.method, checklist: s.night.checklist,
+          by_hotel: Object.fromEntries(Object.entries(s.night.hotels as J).map(([k, h]) => [SITES[k], { counted_inr: r0((h as J).inr), not_counted_scatter_inr: r0((h as J).loose_inr),
+            channels_with_persistent_excess: (h as J).rows.filter((x: J) => x.inr > 0).map((x: J) => ({ channel: x.label, typical_kw: x.typical_kw, good_night_kw: x.good_kw, inr: r0(x.inr), likely_cause: x.cause })) }])),
+          live_year_check_inr: s.night.live ? r0(Object.values(s.night.live as J).reduce((a: number, h: J) => a + h.inr, 0)) : undefined } : undefined };
     },
   },
 };
@@ -446,7 +449,10 @@ function template(calls: [string, J, J][]): string {
           (h.latest_bill ? ` Latest bill: ${h.latest_bill.month}, ${f(h.latest_bill.total_inr)}.` : ""));
       }
     }
-    else if (n === "savings_plan") { p.push(`From operations we can save about ${f(r.operations_inr)} a year, ${r.operations_pct}% of the electricity bill. With one capital item (pump speed controls, which needs investment) it is ${f(r.with_capital_inr)}, ${r.with_capital_pct}%. The biggest items:`); for (const m of [...r.measures].sort((a: J, b: J) => b.inr - a.inr).slice(0, 6)) p.push(`- ${m.hotel}: ${m.measure}: ${f(m.inr)} a year`); }
+    else if (n === "savings_plan") { p.push(`From operations we can save about ${f(r.operations_inr)} a year, ${r.operations_pct}% of the electricity bill. With one capital item (pump speed controls, which needs investment) it is ${f(r.with_capital_inr)}, ${r.with_capital_pct}%. The biggest items:`); for (const m of [...r.measures].sort((a: J, b: J) => b.inr - a.inr).slice(0, 6)) p.push(`- ${m.hotel}: ${m.measure}: ${f(m.inr)} a year`);
+      if (r.night_base_load) { const nb = r.night_base_load; const tot = Object.values(nb.by_hotel as J).reduce((a: number, h: J) => a + h.counted_inr, 0);
+        p.push(tot > 0 ? `Night base load (00:00–05:00): ${f(tot)} a year where a channel stays above its own good nights night after night; confirm on a night walk-round.`
+          : "Night base load (00:00–05:00): no channel stays above its own good nights night after night, so nothing is counted; switching areas off at night needs a night walk-round to size."); } }
   }
   return p.join("\n");
 }

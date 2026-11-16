@@ -169,7 +169,30 @@ def export_savings():
     bill = float(pd.read_parquet(CLEAN / "monthly_bills.parquet").total_energy_cost_inr.sum())
     # totals: operations (all but Capital) and with capital; live mode writes live_feed/savings.json, the "checked on the live year" line
     write("savings.json", dict(measures=p.to_dict("records"), not_sized=NOT_SIZED, option_c=stats, group_bill=bill, target=[0.08, 0.12],
-                               totals=totals(p)), also_fn=True)
+                               totals=totals(p), night=night_export()), also_fn=True)
+
+
+def night_export() -> dict:
+    """The night base-load audit for the Bills & savings panel and Ask: per hotel and channel (original year = the claim), the live-year check
+    totals, and the walk-round checklist."""
+    from savings import night_audit
+    sys.path.insert(0, str(ROOT / "tools"))
+    import night_baseload as NB
+    au = night_audit()
+    cols = ["label", "channel", "typical_kw", "good_kw", "excess_kw", "share", "ac1", "kwh", "inr", "loose_inr", "status", "cause", "walk"]
+    hotels = {}
+    for s, a in au["orig"].items():
+        t = a["table"].reindex(columns=cols).fillna({"cause": "", "walk": "", "ac1": 0.0})
+        hotels[s] = dict(inr=float(t.inr.sum()), loose_inr=float(t.loose_inr.sum()), bill=a["bill"], rate=a["rate"],
+                         rows=t.round(3).to_dict("records"))
+    live = {s: dict(inr=float(a["table"].inr.sum()), bill=a["bill"]) for s, a in au["live"].items()} if au["live"] else None
+    checklist = [dict(area=NB.LABEL[c], check=NB.CAUSE[c][1]) for c in ("ahu_public_kw", "ahu_heaters_kw", "kitchen_kw", "kitchen_exhaust_mua_kw",
+                                                                        "lighting_public_kw", "other_kw", "pumps_pool_kw")]
+    return dict(hotels=hotels, live=live, checklist=checklist, hours="00:00–05:00",
+                method="Each channel vs its own good nights (10th–20th percentile of the 30 most similar nights by occupancy and temperature); claimed only "
+                       "if more than half the nights are above it by more than the ±1 % meter accuracy AND the excess persists from night to night. "
+                       "Alert hours, DG and meter-fault hours, the daily plan's levers and must-run loads are excluded. Original year = the claim; the live "
+                       "(synthetic) year is a check.")
 
 
 def export_quality():
