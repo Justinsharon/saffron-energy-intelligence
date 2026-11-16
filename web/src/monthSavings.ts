@@ -86,7 +86,7 @@ export function rateOf(recon: Recon[], site: Site, month: string): number {
   return r ? r.billed_total / Math.max(r.billed_kvah * r.pf, 1) : 0;          // average ₹ per kWh on that bill
 }
 
-export function useMonthSavings(month: string, asOf: string): MonthSavings {
+export function useMonthSavings(month: string, asOf: string, withPlan = true): MonthSavings {
   const alerts = useAlertsAt(asOf);
   const bills = useBillsAt(asOf);
   const hr = { GGN: useHourlyAll("GGN"), JAI: useHourlyAll("JAI"), GOA: useHourlyAll("GOA") };
@@ -95,7 +95,7 @@ export function useMonthSavings(month: string, asOf: string): MonthSavings {
   useEffect(() => {
     let on = true;
     setPlan(undefined);
-    if (!live || `${month}-02` > asOf.slice(0, 10)) { setPlan(null); return; }
+    if (!withPlan || !live || `${month}-02` > asOf.slice(0, 10)) { setPlan(null); return; }
     const at = `${asOf.slice(0, 13)}:00`;
     Promise.all(PLAN_SITES.map((s) => loadMonthPlans(month, s).then((saved) => monthSavings(month, at, saved, s)).catch(() => null)))
       .then((rs) => on && setPlan(combineSavings(rs)));

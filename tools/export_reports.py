@@ -54,9 +54,9 @@ def growth_factor(ts: pd.Timestamp) -> float:
     return GROWTH ** (1 + (d - 182.5) / 365) if d >= 0 else 1.0
 
 
-def saved_plans(month: str) -> dict:
+def saved_plans(month: str, site: str = "GGN") -> dict:
     try:
-        with urllib.request.urlopen(PLANS_URL + month, timeout=20) as r:
+        with urllib.request.urlopen(PLANS_URL + month + f"&site={site}", timeout=20) as r:
             return json.load(r).get("plans", {})
     except Exception as e:                                       # storage unreachable: say so in the report rather than guess
         print(f"  {month}: saved plans could not be read ({e}); plan savings reported as unavailable")
@@ -186,6 +186,33 @@ def main():
                   f"Option C ₹{oc_inr:,.0f}; gap ₹{gap['gap_inr']:,} of which growth ₹{gap['growth_inr']:,}")
     (OUT / "index.json").write_text(json.dumps(dict(months=index, made=today)), encoding="utf-8")
     print(f"wrote {len(index)} closed months to {OUT}")
+    adherence(today)
+
+
+def adherence(today: str):
+    """reports/adherence.json: how the daily plan was followed, day by day, for every live month up to yesterday (approved steps of saved plans,
+    checked against the meters by the same plan check the API serves). The GM Overview shows it at once and checks only the days after it
+    (normally just today) in the browser, instead of re-checking the whole month on every visit."""
+    import api.main as A                                          # noqa: N811
+    A._open_meteo = lambda d, n, site="GGN": None                 # past days: never the live weather
+    now = (datetime.now(timezone.utc) + timedelta(hours=5.5)).strftime("%Y-%m-%dT%H:%M")
+    upto = (pd.Timestamp(today) - pd.Timedelta(days=1)).strftime("%Y-%m-%d")
+    out = {}
+    for s in SITES:
+        out[s] = {}
+        m = LIVE_START
+        while m <= today[:7]:
+            saved = saved_plans(m, s) or {}
+            days = {}
+            for d in sorted(x for x in saved if x <= upto):
+                st, c = A._check(d, saved[d], now, site=s)
+                if st == 200:
+                    sm = c["summary"]
+                    days[d] = {k: sm.get(k, 0) for k in ("approved", "due", "followed", "partly", "not_followed", "verified_inr", "missed_inr")}
+            out[s][m] = days
+            m = add_month(m, 1)
+    (OUT / "adherence.json").write_text(json.dumps(dict(made=now, upto=upto, sites=out), separators=(",", ":")), encoding="utf-8")
+    print(f"adherence: saved-plan days up to {upto}: " + ", ".join(f"{s} {sum(len(v) for v in out[s].values())}" for s in SITES))
 
 
 if __name__ == "__main__":

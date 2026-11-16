@@ -3,6 +3,8 @@
 import { useData, type Measure, type Savings } from "../data";
 import { inr } from "../format";
 import { OptionC } from "./Finance";
+import { useHotel } from "../views";
+import { SiteSwitch } from "./Shift";
 
 const SOURCES: { k: string; label: string; test: (m: Measure) => boolean }[] = [
   { k: "alerts", label: "Alerts acted on (waste fixed, capacitor faults repaired)", test: (m) => m.measure.startsWith("Act on detected") || m.measure.startsWith("Keep PF") },
@@ -14,6 +16,7 @@ const sum = (ms: Measure[], f: (m: Measure) => boolean) => ms.filter(f).reduce((
 
 export default function SavingsPage() {
   const sv = useData<Savings>("savings.json");
+  const { hotel, setHotel } = useHotel();
   const lv = useData<Savings>("live_feed/savings.json");
   if (!sv) return <p className="muted">Loading…</p>;
   const t = sv.totals;
@@ -27,7 +30,9 @@ export default function SavingsPage() {
       <div className="page-head"><div>
         <h1>Savings</h1>
         <p className="lead">What the three hotels can save a year, from the original year's data (Oct 2025 – Sep 2026), and how each rupee will be proven.</p>
-      </div></div>
+      </div>
+        <SiteSwitch value={hotel} onChange={(s) => s !== "ALL" && setHotel(s)} all={false} />
+      </div>
 
       <div className="grid g2">
         <div className="stat big-stat"><span>From operations</span><b>{t.operations_pct.toFixed(1)}%</b><em>{inr(t.operations_inr)} a year of the {inr(sv.group_bill)} electricity bill</em></div>

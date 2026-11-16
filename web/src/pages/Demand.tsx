@@ -12,6 +12,8 @@ import { apiPlan, checkPlan, getPlan, type CheckResult, type CheckStep, type Pla
 import { checkActions, type PlanView, type SavedAction } from "../planlog";
 import { loadPlan, plannerName, postPlan, setPlannerName } from "../planStore";
 import { useDayCheck } from "../dayCheck";
+import { useHotel } from "../views";
+import { SiteSwitch } from "./Shift";
 
 // plain names for the "what changed" notes when bookings change the plan
 const PLAIN: Record<string, string> = { chillers: "Chillers", chw: "Chilled water", ahu: "Banquet cooling", laundry: "Laundry", water: "Water heating", ev: "EV charging",
@@ -54,9 +56,6 @@ const LIMITS: Record<PlanSite, { cd: number; warn: number; chillers: { y: number
   JAI: { cd: 700, warn: 644, chillers: [{ y: 180, label: "one chiller" }, { y: 400, label: "both chillers" }], chillerNote: "One chiller (200 TR) up to 180 TR with a 10 % margin · both up to 400 TR" },
   GOA: { cd: 600, warn: 552, chillers: [{ y: 135, label: "one chiller" }, { y: 300, label: "both chillers" }], chillerNote: "One chiller (150 TR) up to 135 TR with a 10 % margin · both up to 300 TR" },
 };
-const PLAN_SITES: PlanSite[] = ["GGN", "JAI", "GOA"];
-const siteStore = { get: (): PlanSite => { try { const s = localStorage.getItem("plan_site"); return s === "JAI" || s === "GOA" ? s : "GGN"; } catch { return "GGN"; } },
-  set: (s: PlanSite) => { try { localStorage.setItem("plan_site", s); } catch { /* private window */ } } };
 const START_H = Array.from({ length: 33 }, (_, i) => 6 + i / 2);       // 06:00 .. 22:00 in half hours
 const END_H = Array.from({ length: 34 }, (_, i) => 7 + i / 2);         // 07:00 .. 23:30, plus "past midnight"
 const hm = (h: number) => `${String(Math.floor(h)).padStart(2, "0")}:${h % 1 ? "30" : "00"}`;
@@ -232,8 +231,7 @@ function TomorrowPlan() {
   useEffect(() => setDate(live ? tomorrow : today), [live, today]);
   const asOf = live ? istNow() : clockNow;
   const past = date <= today;
-  const [site, setSiteState] = useState<PlanSite>(siteStore.get);
-  const setSite = (s: PlanSite) => { siteStore.set(s); setSiteState(s); };
+  const { hotel: site, setHotel: setSite } = useHotel();             // one hotel choice across the app
   const ggnDay = usePlanDay(date);
   // Jaipur / Goa: the usual inputs for the date come from the plan API (their models are not shipped to the browser)
   const [siteBase, setSiteBase] = useState<{ rooms: number; guests: number; covers: number } | null | undefined>(undefined);
@@ -366,25 +364,32 @@ function TomorrowPlan() {
       <div className="page-head">
         <div>
           <h1>{past ? `Plan vs actual, ${date === today ? "today" : fmtD(date)}` : "Tomorrow's plan"}, {SITE_NAME[site]}</h1>
-          <div className="btn-row" role="group" aria-label="Hotel" style={{ margin: "6px 0 8px" }}>
-            {PLAN_SITES.map((s) => <button key={s} className={`btn ${s === site ? "accent" : "ghost"}`} aria-pressed={s === site} onClick={() => setSite(s)}>{SITE_NAME[s]}</button>)}
-          </div>
           <p className="lead">{past ? "Each step of the day's plan, checked against the meters up to " + (live ? "now" : "the hour you are looking back at") + ". Followed steps count as verified savings; steps not followed show what they cost."
             : "Enter tomorrow's bookings. The forecast and the operating plan update as you type. Each step is a recommendation: approve it, skip it with a reason, or change its time. Nothing is switched automatically, and every decision is logged."}</p>
-          {(live || past) && <TodayStrip site={site} now={live ? istNow() : clockNow} />}
-          {g && g.peak_kva != null && <span className="feed-note">Today so far: peak {n(g.peak_kva)} kVA at {String(g.peak_hour).padStart(2, "0")}:00 (live feed, simulated meters)</span>}
+          <div className="chip-row">
+            {(live || past) && <TodayStrip site={site} now={live ? istNow() : clockNow} />}
+            {g && g.peak_kva != null && <span className="feed-note">Today so far: peak {n(g.peak_kva)} kVA at {String(g.peak_hour).padStart(2, "0")}:00 (live feed, simulated meters)</span>}
+          </div>
         </div>
-        <label className="field" style={{ minWidth: 200 }}>
-          <span className="small muted">Plan for</span>
-          <input type="date" min={LIVE_FIRST} max={live ? last : today} value={date} onChange={(e) => e.target.value && setDate(e.target.value)} />
-          <span className="hint">{date === tomorrow ? "tomorrow" : date === today ? "today: plan vs actual so far" : date < today ? "past day: plan vs actual" : `${Math.round((parse(date).getTime() - parse(today).getTime()) / DAY_MS)} days ahead`}</span>
-        </label>
+        <SiteSwitch value={site} onChange={(s) => s !== "ALL" && setSite(s)} all={false} />
       </div>
 
+      {base === null && <div className="card-head" style={{ marginBottom: 8 }}><label className="field plan-for">
+                <span className="small muted">Plan for</span>
+                <input type="date" min={LIVE_FIRST} max={live ? last : today} value={date} onChange={(e) => e.target.value && setDate(e.target.value)} />
+                <span className="hint">{date === tomorrow ? "tomorrow" : date === today ? "today: plan vs actual so far" : date < today ? "past day: plan vs actual" : `${Math.round((parse(date).getTime() - parse(today).getTime()) / DAY_MS)} days ahead`}</span>
+              </label></div>}
       {base === undefined || (base && !form) ? <p className="muted">Loading the forecast…</p> : base === null ? <p className="muted">{site === "GGN" ? `No forecast is prepared for ${fmtD(date)} yet (plans cover the next few weeks).`
         : `The planning service did not answer, and ${SITE_NAME[site]}'s plan comes from it only (its models are not in the browser). Try again in a minute.`}</p> : form && (<>
           <section className="panel" aria-labelledby="bk">
-            <h2 id="bk" style={{ marginTop: 0 }}>Bookings for {title}</h2>
+            <div className="card-head">
+              <h2 id="bk" style={{ margin: 0 }}>Bookings for {title}</h2>
+              <label className="field plan-for">
+                <span className="small muted">Plan for</span>
+                <input type="date" min={LIVE_FIRST} max={live ? last : today} value={date} onChange={(e) => e.target.value && setDate(e.target.value)} />
+                <span className="hint">{date === tomorrow ? "tomorrow" : date === today ? "today: plan vs actual so far" : date < today ? "past day: plan vs actual" : `${Math.round((parse(date).getTime() - parse(today).getTime()) / DAY_MS)} days ahead`}</span>
+              </label>
+            </div>
             <div className="grid g3 form3">
               <Field label="Rooms occupied" value={form.rooms} suggested={base.rooms} touched={!!form.touched.rooms} max={{ GGN: 220, JAI: 160, GOA: 140 }[site]} onChange={(v) => set("rooms", v)} />
               <Field label="Guests in house" value={form.guests} suggested={base.guests} touched={!!form.touched.guests} max={700} onChange={(v) => set("guests", v)} />
@@ -402,12 +407,17 @@ function TomorrowPlan() {
             </label>
             <p className="small muted">Weather: {res ? `${res.weather || "typical temperatures for this date"}, top ${Math.round(Math.max(...res.forecast.temp))} °C` : "checking…"}. Rooms and covers are suggested from the usual pattern for this time of year.</p>
             <div className="save-row">
-              <input ref={nameRef} className="name" value={name} onChange={(e) => setName(e.target.value)} onBlur={() => name.trim() && setPlannerName(name)} placeholder="Your name" aria-label="Your name" />
+              <label className="field name-field">
+                <span className="small muted">Your name (for the log)</span>
+                <input ref={nameRef} className="name" value={name} onChange={(e) => setName(e.target.value)} onBlur={() => name.trim() && setPlannerName(name)} placeholder="Your name" />
+              </label>
               {dirty || !saved?.plan ? (
                 <button className="btn accent" disabled={busy || !res || planning} onClick={() => (name.trim() ? save() : nameRef.current?.focus())}>Save bookings and plan</button>
-              ) : (
-                <span className="saved-note">Saved {saved.plan.at.slice(11)} by {saved.plan.by}{saved.storage === "device" ? " (this device only)" : ""}</span>
-              )}
+              ) : (<>
+                <button className="btn ghost" disabled title="Nothing has changed since the last save">Save again</button>
+                <span className="saved-note">Saved {saved.plan.at.slice(11)} by {saved.plan.by}{saved.storage === "device" ? " (this device only)" : ""}
+                  {name.trim() && name.trim() !== saved.plan.by ? " · last saved by someone else" : ""}</span>
+              </>)}
               {justSaved && !dirty && <a href="#plan" className="small" onClick={(e) => { e.preventDefault(); document.getElementById("plan")?.scrollIntoView({ behavior: "smooth" }); }}>See the updated plan ↓</a>}
             </div>
             <p className="small save-status" aria-live="polite">{planning ? "Updating forecast…" : dirty ? "Forecast and plan updated for your changes; not saved yet." : ""}

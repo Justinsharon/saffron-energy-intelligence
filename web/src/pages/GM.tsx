@@ -6,6 +6,7 @@ import { SITE_NAME, useAlertsAt, useBillsAt, useChangesAt, type BillChange, type
 import { fmtMonth, inr, n } from "../format";
 import { SiteSwitch } from "./Shift";
 import { DRIVER, NOT_CLAIMED } from "../copy";
+import { useHotel } from "../views";
 
 const COMP_COLORS: Record<string, string> = {
   "Energy (kVAh)": "#151515", "Demand charge": "#a8a8a8", "Excess-demand penalty": "#c93a1c", "Fuel surcharge": "#9b9b9b",
@@ -20,7 +21,17 @@ const COMP_NAME: Record<string, string> = {
 export function sentence(group: string, v: number, c: BillChange["context"], d: BillChange): string {
   const s = `${v >= 0 ? "added" : "saved"} ${inr(Math.abs(v))}`;
   switch (group) {
-    case "Weather": return `Hotter or cooler weather ${s}. The hottest hour went from ${c.tmax_A.toFixed(0)} °C to ${c.tmax_B.toFixed(0)} °C, and the hotel needed ${c.cdh_B > c.cdh_A ? `${(c.cdh_B / Math.max(c.cdh_A, 1)).toFixed(1)}× as much` : "less"} cooling.`;
+    case "Weather": {
+      // the hottest hour often barely moves between months; then say what did change: the average temperature, else the cooling need
+      const days = (m: string) => new Date(Date.UTC(Number(m.slice(0, 4)), Number(m.slice(5, 7)), 0)).getUTCDate();
+      const per = (cdh: number, m: string) => cdh / days(m);                      // cooling degree-hours per day: months differ in length
+      const need = per(c.cdh_B, d.b) / Math.max(per(c.cdh_A, d.a), 1e-9);
+      const peak = Math.abs(c.tmax_B - c.tmax_A) >= 1 ? ` The hottest hour went from ${c.tmax_A.toFixed(0)} °C to ${c.tmax_B.toFixed(0)} °C.` : "";
+      const avg = c.tavg_A != null && c.tavg_B != null && Math.abs(c.tavg_B - c.tavg_A) >= 0.5
+        ? ` ${fmtMonth(d.b)} was ${Math.abs(c.tavg_B - c.tavg_A).toFixed(1)} °C ${c.tavg_B < c.tavg_A ? "cooler" : "warmer"} on average than ${fmtMonth(d.a)}.` : "";
+      const cool = Math.abs(need - 1) >= 0.05 ? ` The hotel needed ${need > 1 ? `${need.toFixed(1)}× as much` : `${Math.round((1 - need) * 100)}% less`} cooling per day.` : "";
+      return `The weather ${s}.${avg || peak}${cool}`;
+    }
     case "Occupancy": return `Guests ${s}: rooms sold went from ${n(c.rooms_A)} to ${n(c.rooms_B)} room-nights.`;
     case "Events": return `Events ${s}: event guests went from ${n(c.event_guests_A)} to ${n(c.event_guests_B)}.`;
     case "Demand": return `Peak-demand charges ${s}. The month's highest power draw went from ${n(c.md_A)} to ${n(c.md_B)} kVA${c.md_B > 1000 ? ", over the 1,000 kVA contract, which triggered a penalty" : ""}.`;
@@ -40,7 +51,7 @@ export default function GM() {
   const bills = useBillsAt(now);                 // original year + live-year bills issued by now
   const changes = useChangesAt(bills);
   const alerts = useAlertsAt(now);
-  const [site, setSite] = useState<Site>("GGN");
+  const { hotel: site, setHotel: setSite } = useHotel();
   const months = useMemo(() => bills ? bills.recon.filter((r) => r.site === site).map((r) => r.month).sort() : [], [bills, site]);
   const nowM = now.slice(0, 7);
   const lastM = months[months.length - 1];
