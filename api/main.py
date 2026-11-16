@@ -66,6 +66,15 @@ def _num(x, default):
         return default
 
 
+START_SLACK_MIN = 60     # a start within 1 h of the training range is ordinary; only further out is flagged as an extrapolation
+
+
+def _far_from(st: str, lo: int, hi: int) -> bool:
+    """True when an HH:MM start is more than START_SLACK_MIN outside the training start hours [lo:00, hi:00]."""
+    m = int(st[:2]) * 60 + int(st[3:])
+    return m < lo * 60 - START_SLACK_MIN or m > hi * 60 + START_SLACK_MIN
+
+
 def _hhmm(t) -> str | None:
     s = str(t or "").strip()
     try:
@@ -197,10 +206,10 @@ def read_site_bookings(site: str, raw, meta: dict, notes: list) -> list:
             g = cap
         s, e = booking_hours(st, en)
         lo, hi = rng["event_start_hours"][v]
-        if not lo <= s <= hi:
+        if _far_from(st, lo, hi):
             when = f"at {lo:02d}:00" if lo == hi else f"between {lo:02d}:00 and {hi:02d}:00"
-            notes.append(f"Booking {i}: events at {v} in the training year started {when}; a {st} start is outside that, so the forecast for "
-                         "those hours is an extrapolation.")
+            notes.append(f"Booking {i}: events at {v} in the training year started {when}; a {st} start is more than 1 h outside that, so the "
+                         "forecast for those hours is an extrapolation.")
         if e - s > 16:
             notes.append(f"Booking {i}: {e - s} hours is longer than any event in the training year.")
         if str(b.get("hall")).strip() != v:
@@ -263,9 +272,9 @@ def read_bookings(raw, rng: dict, notes: list) -> list:
             g = cap
         s, e = booking_hours(st, en)
         lo, hi = rng["event_start_hours"]
-        if not lo <= s <= hi:
-            notes.append(f"Booking {i}: events in the training year started between {lo:02d}:00 and {hi:02d}:00; a {st} start is outside that, "
-                         "so the forecast for those hours is an extrapolation.")
+        if _far_from(st, lo, hi):
+            notes.append(f"Booking {i}: events in the training year started between {lo:02d}:00 and {hi:02d}:00; a {st} start is more than 1 h "
+                         "outside that, so the forecast for those hours is an extrapolation.")
         if e - s > 16:
             notes.append(f"Booking {i}: {e - s} hours is longer than any event in the training year.")
         items.append(dict(n=[i], hall=hall, s=s, e=e, guests=int(round(g)), late=en == "23:59", start=st, end=en))

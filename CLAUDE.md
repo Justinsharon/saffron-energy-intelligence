@@ -47,6 +47,9 @@ Full brief, acceptance tests (T1–T10), metrics, schemas, findings and progress
 - `api/main.py` (FastAPI): `GET /health`; `POST /plan` {date, rooms, guests, covers, tmax | temps[24], bookings[{hall A/B/A+B, start, end, guests}]}
   returns hourly forecast (kW, peak kVA, cooling TR), peak risk, the operating plan (`src/operating_plan.py`) and plain-English `notes`.
   Odd inputs are clamped/flagged in `notes`, never an error; only a date outside the live year returns 422. Recommend only.
+  Hold times (16 Nov, all hotels): a CHW setpoint block lasts ≥ 3 h (a short 8.0 °C block goes back to 7.0 °C, a short 7.0 °C block grows into 8.0 °C, never
+  the reverse); chillers don't switch for < 2 h unless the load needs the bigger stage or the two-chiller guardrail blocks the merge (the reason says which).
+  A booking start is flagged as an extrapolation only when it is more than 1 h outside that venue's training start hours.
 - Jaipur / Goa (16 Nov): `site` JAI / GOA on `/plan`, `/forecast`, `/risk`, `/check`, `/savings`. Venues validated per hotel (aliases like "lawns",
   "ballroom"; unknown venues skipped with a note). Plan uses only levers their sub-meters can check (`operating_plan.plan_site`): staging (checked by
   total kW/TR), CHW 7.0/8.0 °C (shown, never counted: no setpoint meter), event lighting ±30 min, Goa pool filtration (≥ 8 h), laundry, demand watch

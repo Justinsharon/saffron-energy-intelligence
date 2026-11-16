@@ -28,6 +28,8 @@ TWO_MIN_TR = {"GGN": CH3_MAX, "JAI": 200.0, "GOA": 150.0}
 FILTRATION_MIN_H = 8                                  # CONTEXT.md §9: pool filtration >= 8 h a day
 ONE_MARGIN = 0.90                                     # Jaipur / Goa: one chiller up to its capacity minus 10 %
 DEMAND_STEP_FRAC = 0.92                               # Jaipur / Goa: a demand step only if the forecast comes within 8 % of the contract
+CHW_MIN_H = 3                                         # a setpoint is held at least 3 h (a shorter block goes to the safer 7.0 °C)
+STAGE_MIN_H = 2                                       # chillers are not switched for less than 2 h unless the load needs the bigger stage
 LIGHT_LEAD_MIN = 30                                   # event lighting on 30 min before the booking, off 30 min after
 AHU = {"A": "AHU-BQ-A", "B": "AHU-BQ-B", "A+B": "AHU-BQ-A and AHU-BQ-B"}
 EXCLUDED = ("kitchen exhaust", "exhaust", "make-up air", "thermostat", "guest room", "guest-room", "lift", "elevator", "fire", "life-safety", "life safety")
@@ -85,6 +87,72 @@ def windows(keys: list) -> list:
         if h == len(keys) or keys[h] != keys[s]:
             out.append((s, h, keys[s]))
             s = h
+    return out
+
+
+def hold_setpoint(sp: list) -> list:
+    """No setpoint block shorter than CHW_MIN_H. A short 8.0 °C block goes back to 7.0 °C; a short 7.0 °C block grows one hour at a time
+    into its longer 8.0 °C neighbour. Never the other way: 7.0 °C is the safe setting, so a doubtful hour always ends up at 7.0 °C."""
+    sp = list(sp)
+    while True:
+        w = windows(sp)
+        if len(w) == 1:
+            return sp
+        hi = [(s, e) for s, e, v in w if v > CHW_STD and e - s < CHW_MIN_H]
+        if hi:
+            s, e = hi[0]
+            sp[s:e] = [CHW_STD] * (e - s)
+            continue
+        lo = [i for i, (s, e, v) in enumerate(w) if e - s < CHW_MIN_H]
+        if not lo:
+            return sp
+        i = lo[0]
+        nb = [j for j in (i + 1, i - 1) if 0 <= j < len(w)]
+        j = max(nb, key=lambda j: w[j][1] - w[j][0])                   # take the hour from the longer 8.0 °C neighbour (ties: the later one)
+        sp[w[j][0] if j > i else w[j][1] - 1] = CHW_STD
+
+
+def held_note(want: list, s: int, e: int) -> str:
+    """Reason text for a 7.0 °C block that includes hours where 8.0 °C was possible but too short to hold (CHW_MIN_H)."""
+    n = sum(1 for h in range(s, e) if want[h] > CHW_STD)
+    return (f" Includes {n} h where 8.0 °C was possible, kept at 7.0 °C (the safer setting) so the setpoint does not change for less than "
+            f"{CHW_MIN_H} h." if n else "")
+
+
+def hold_stages(keys: list, tr: list, rank: dict, two_ok) -> list:
+    """No chiller switch for less than STAGE_MIN_H. A short block of a smaller stage joins the next bigger neighbouring stage (a bigger stage
+    always carries the load), unless that would run two chillers below their guardrail (two_ok). A short block of a bigger stage stays:
+    the load needs it. Each block's reason says why it is short (stage_note)."""
+    keys = list(keys)
+    changed = True
+    while changed:
+        changed = False
+        w = windows(keys)
+        for i, (s, e, k) in enumerate(w):
+            if e - s >= STAGE_MIN_H or len(w) == 1:
+                continue
+            up = [w[j] for j in (i - 1, i + 1) if 0 <= j < len(w) and rank[w[j][2]] > rank[k] and all(two_ok(w[j][2], tr[h]) for h in range(s, e))]
+            if up:
+                t = min(up, key=lambda n: rank[n[2]])[2]
+                keys[s:e] = [t] * (e - s)
+                changed = True
+                break
+    return keys
+
+
+def stage_note(w: list, i: int, raw: list, rank: dict, need: str, guard: str) -> str:
+    """Reason text for a staging block that was lengthened, or that is shorter than STAGE_MIN_H and kept."""
+    s, e, k = w[i]
+    out = ""
+    lower = sum(1 for h in range(s, e) if rank[raw[h]] < rank[k])
+    if lower:
+        out += f" Includes {lower} h a smaller stage could carry, kept on this stage so the chillers do not switch for less than {STAGE_MIN_H} h."
+    if e - s < STAGE_MIN_H and len(w) > 1:
+        nb = [w[j][2] for j in (i - 1, i + 1) if 0 <= j < len(w)]
+        if any(rank[n] < rank[k] for n in nb):
+            out += f" Only {e - s} h, but the load needs it: {need}."
+        else:
+            out += f" Only {e - s} h: joining the neighbouring stage would {guard}."
     return out
 
 
@@ -150,12 +218,16 @@ def plan_day(hourly_tr, hourly_kva, temp_c, bookings, pf, ref=None, tariff=None,
         return plan_site(site, cfg, hourly_tr, hourly_kva, temp_c, bookings, pf, ref, tariff)
     rate = (tariff["energy"] + tariff["fsa"] + tariff["duty"]) / pf          # ₹ per kWh at the margin
     acts = []
-    st = [stage(x) for x in hourly_tr]
-    for s, e, key in windows(st):
+    raw = [stage(x) for x in hourly_tr]
+    rank = {"CH-3": 0, "CH-1": 1, "CH-1+CH-3": 2}
+    st = hold_stages(raw, hourly_tr, rank, lambda k, tr: k != "CH-1+CH-3" or tr >= CH3_MAX)
+    sw = windows(st)
+    for i, (s, e, key) in enumerate(sw):
         trs = hourly_tr[s:e]
         sav = 0.0
         for h in range(s, e):
-            p, ly = kwtr_plan(hourly_tr[h], ref["curve"]), ref["kwtr_ly"][h]
+            p = kwtr_plan(hourly_tr[h], ref["curve"]) if key != "CH-1+CH-3" else None
+            ly = ref["kwtr_ly"][h]
             if p is not None and ly is not None:
                 sav += hourly_tr[h] * max(0.0, ly - p) * rate
         lo, hi = min(trs), max(trs)
@@ -164,10 +236,13 @@ def plan_day(hourly_tr, hourly_kva, temp_c, bookings, pf, ref=None, tariff=None,
         why = {"CH-3": f"Cooling load {lo:.0f}–{hi:.0f} TR stays under 130 TR with a 10 % margin, so the small chiller carries it alone at its best efficiency.",
                "CH-1": f"Cooling load {lo:.0f}–{hi:.0f} TR is too much for CH-3 (130 TR with margin) but within CH-1 alone (280 TR); one chiller at good part load beats two lightly loaded.",
                "CH-1+CH-3": f"Cooling load {lo:.0f}–{hi:.0f} TR needs more than one chiller (280 TR with margin)."}[key] + cap
+        why += stage_note(sw, i, raw, rank, "a smaller stage cannot carry this load with the 10 % margin",
+                          "run two chillers below 130 TR, which is never allowed")
         acts.append(dict(kind="plan", group="chillers", start=hh(s), end=hh(e), equipment="Chillers (CH-1, CH-3)", setting=setting, reason=why,
                          saving_inr=sav, guardrail=GUARD["chillers"], min_tr=lo, max_tr=hi))
 
-    sp = [CHW_RESET if (temp_c[h] < RESET_BELOW_C and stage(hourly_tr[h]) != "CH-1+CH-3") else CHW_STD for h in range(24)]
+    want = [CHW_RESET if (temp_c[h] < RESET_BELOW_C and st[h] != "CH-1+CH-3") else CHW_STD for h in range(24)]
+    sp = hold_setpoint(want)
     for s, e, v in windows(sp):
         sav = 0.0
         pcts = [chw_pct(hourly_tr[h], ref) for h in range(s, e)]
@@ -179,7 +254,7 @@ def plan_day(hourly_tr, hourly_kva, temp_c, bookings, pf, ref=None, tariff=None,
         span = f"{lo_p:.1f} %" if hi_p - lo_p < 0.05 else f"{lo_p:.1f}–{hi_p:.1f} %"
         src = "measured on these chillers" if ref.get("chw_pct_per_c") else "engineering guide"
         why = (f"Outdoor {min(temp_c[s:e]):.0f}–{max(temp_c[s:e]):.0f} °C and one chiller running: warmer chilled water still holds comfort and saves about {span} of chiller power per °C at this load ({src})."
-               if v > CHW_STD else "Standard setting: outdoor 24 °C or warmer, or two chillers needed.")
+               if v > CHW_STD else "Standard setting: outdoor 24 °C or warmer, or two chillers needed.") + held_note(want, s, e)
         acts.append(dict(kind="plan", group="chw", start=hh(s), end=hh(e), equipment="Chilled-water supply setpoint", setting=f"{v:.1f} °C",
                          reason=why, saving_inr=sav, guardrail=GUARD["chw"], setpoint_c=v))
 
@@ -320,7 +395,11 @@ def plan_site(site, cfg, hourly_tr, hourly_kva, temp_c, bookings, pf, ref, tarif
 
     # chillers: staging bands from the register; ₹ = last year's matched-day hours at poor kW/TR (two chillers on a light load)
     st = [site_stage(x, units) for x in hourly_tr]
-    for s, e, key in windows(["two" if x == "two" else "one" for x in st]):
+    raw = ["two" if x == "two" else "one" for x in st]
+    rank = {"one": 0, "two": 1}
+    keys = hold_stages(raw, hourly_tr, rank, lambda k, tr: k != "two" or tr >= min(units))
+    sw = windows(keys)
+    for i, (s, e, key) in enumerate(sw):
         trs = hourly_tr[s:e]
         lo, hi = min(trs), max(trs)
         full = [h for h in range(s, e) if st[h] == "one-full"]
@@ -334,6 +413,8 @@ def plan_site(site, cfg, hourly_tr, hourly_kva, temp_c, bookings, pf, ref, tarif
                    + (f"; {len(full)} h between that and {min(units):.0f} TR, where two chillers are not run: keep one near full load and the second ready" if full else "")
                    + "). Last year on similar days " + (f"the plant ran at poor kW per TR (two chillers sharing a light load) for about {sum(ref['poor_kwh_ly'][h] for h in range(s, e)):.0f} kWh in these hours."
                                                        if sav > 0 else "the plant held its normal kW per TR in these hours."))
+        why += stage_note(sw, i, raw, rank, f"one chiller cannot carry this load with its 10 % margin ({ONE_MARGIN * max(units):.0f} TR)",
+                          f"run two chillers below {min(units):.0f} TR, which is never allowed")
         if hi > sum(units):
             why += f" Forecast load is above what both chillers can carry ({sum(units):.0f} TR): expect warm spaces; plan comfort messaging."
         acts.append(dict(base, group="chillers", start=hh(s), end=hh(e), equipment=f"Chillers ({ch['id']}, {ch['description'].lower()})", setting=setting,
@@ -341,13 +422,14 @@ def plan_site(site, cfg, hourly_tr, hourly_kva, temp_c, bookings, pf, ref, tarif
                          guardrail=G["chillers"], min_tr=lo, max_tr=hi, verifiable="total kW per TR"))
 
     # CHW setpoint: 7.0 °C, 8.0 °C when outdoor < 24 °C and one chiller carries the load; never < 6.5 °C. No setpoint meter: shown, not counted
-    sp = [CHW_RESET if (temp_c[h] < RESET_BELOW_C and st[h] == "one") else CHW_STD for h in range(24)]
+    want = [CHW_RESET if (temp_c[h] < RESET_BELOW_C and st[h] == "one" and keys[h] == "one") else CHW_STD for h in range(24)]
+    sp = hold_setpoint(want)
     for s, e, v in windows(sp):
         est = sum(hourly_tr[h] * curve_at(hourly_tr[h], curve) * SETPOINT_PCT_PER_C * (v - CHW_STD) for h in range(s, e)) * rate
         why = (f"Outdoor {min(temp_c[s:e]):.0f}–{max(temp_c[s:e]):.0f} °C and one chiller carrying the load: warmer chilled water still holds comfort."
                if v > CHW_STD else "Standard setting: outdoor 24 °C or warmer, or the load needs more than one chiller at its margin.")
         why += (f" The guide's ~3.5 % per °C would put this at about ₹{est:,.0f}, but there is no setpoint meter here, so it is not verifiable and is "
-                "not counted in any ₹ total." if v > CHW_STD else " No setpoint meter here: not verifiable.")
+                "not counted in any ₹ total." if v > CHW_STD else " No setpoint meter here: not verifiable.") + held_note(want, s, e)
         acts.append(dict(base, group="chw", start=hh(s), end=hh(e), equipment="Chilled-water supply setpoint", setting=f"{v:.1f} °C", reason=why,
                          saving_inr=0.0, estimate_inr=est, counted=False, guardrail=G["chw"], setpoint_c=v, verifiable="not verifiable (no setpoint meter)"))
 

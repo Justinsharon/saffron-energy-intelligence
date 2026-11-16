@@ -18,9 +18,9 @@
     "semantic_hash": "d41d8cd98f00b204e9800998ecf8427e"
   },
   "api/main.py": {
-    "mtime": 1794795306.5485258,
-    "seen": 1794803465.2010086,
-    "ast_hash": "51b5f40f417ad8651bb97a6aaaff48e6",
+    "mtime": 1794804910.5903454,
+    "seen": 1794805210.3862092,
+    "ast_hash": "6d56d1ea345a51f4853c1aebc9c07f4d",
     "semantic_hash": ""
   },
   "app.py": {
@@ -180,9 +180,9 @@
     "semantic_hash": "95228e8208c4e9156427a034d5b9070e"
   },
   "src/operating_plan.py": {
-    "mtime": 1794795332.9187758,
-    "seen": 1794803465.201089,
-    "ast_hash": "9a0d9397a30d3554c94c474b430a0c74",
+    "mtime": 1794804945.491992,
+    "seen": 1794805210.3862543,
+    "ast_hash": "43bdbe766d54d3ee2cf19260367466d3",
     "semantic_hash": ""
   },
   "src/peak_risk.py": {
@@ -312,8 +312,8 @@
     "semantic_hash": ""
   },
   "web/netlify/functions/data/alerts_lite.json": {
-    "mtime": 1794803248.122351,
-    "seen": 1794803465.2011497,
+    "mtime": 1794805077.54698,
+    "seen": 1794805210.3862875,
     "ast_hash": "67034f4b0df577f9daab36a483b83d88",
     "semantic_hash": "67034f4b0df577f9daab36a483b83d88"
   },
@@ -324,20 +324,20 @@
     "semantic_hash": "f1abf688a65f04fde2f23fe8bf05eb04"
   },
   "web/netlify/functions/data/bills.json": {
-    "mtime": 1794803275.461299,
-    "seen": 1794803465.201154,
+    "mtime": 1794805106.3678699,
+    "seen": 1794805210.3862896,
     "ast_hash": "9f73deab7599e954f51090b75d816aca",
     "semantic_hash": "9f73deab7599e954f51090b75d816aca"
   },
   "web/netlify/functions/data/forecast_days.json": {
-    "mtime": 1794803264.5153599,
-    "seen": 1794803465.2011561,
+    "mtime": 1794805095.0471997,
+    "seen": 1794805210.3862906,
     "ast_hash": "9bd51c2f8aa58784549dde226d86dcf5",
     "semantic_hash": "9bd51c2f8aa58784549dde226d86dcf5"
   },
   "web/netlify/functions/data/forecast_whatif.json": {
-    "mtime": 1794803275.394086,
-    "seen": 1794803465.201158,
+    "mtime": 1794805106.308638,
+    "seen": 1794805210.3862915,
     "ast_hash": "2564cd9706aaa938614709c75d69bf37",
     "semantic_hash": "2564cd9706aaa938614709c75d69bf37"
   },
@@ -354,8 +354,8 @@
     "semantic_hash": "9ff38912ac09800ac712f7ae9a369e35"
   },
   "web/netlify/functions/data/live_feed/bill_changes.json": {
-    "mtime": 1794802717.2749689,
-    "seen": 1794803465.2011647,
+    "mtime": 1794803479.7782629,
+    "seen": 1794805210.3862948,
     "ast_hash": "f64c2ab38df92156b13ed8e5a442956b",
     "semantic_hash": "f64c2ab38df92156b13ed8e5a442956b"
   },
@@ -390,20 +390,20 @@
     "semantic_hash": "495a01de0b659607b0beed1b4dad71d3"
   },
   "web/netlify/functions/data/live_feed/savings.json": {
-    "mtime": 1794802724.046373,
-    "seen": 1794803465.2011776,
-    "ast_hash": "e8070303af8e0d9a29f3d4819f69d756",
+    "mtime": 1794803487.7979195,
+    "seen": 1794805210.3863013,
+    "ast_hash": "2b452bab146e380c1d0cf35fa3209e94",
     "semantic_hash": ""
   },
   "web/netlify/functions/data/quality.json": {
-    "mtime": 1794803255.9040868,
-    "seen": 1794803465.20118,
+    "mtime": 1794805085.9910288,
+    "seen": 1794805210.3863025,
     "ast_hash": "ddc3017ae75b365483678f1a0d3e35b3",
     "semantic_hash": "ddc3017ae75b365483678f1a0d3e35b3"
   },
   "web/netlify/functions/data/savings.json": {
-    "mtime": 1794803252.201218,
-    "seen": 1794803465.201182,
+    "mtime": 1794805081.8091009,
+    "seen": 1794805210.3863034,
     "ast_hash": "af98970fee7d223f7932b4f912a553f0",
     "semantic_hash": ""
   },
@@ -438,8 +438,8 @@
     "semantic_hash": "1d96a12a2524466d93ebb4a19ae27c3d"
   },
   "web/public/data/alerts.json": {
-    "mtime": 1794803248.1040509,
-    "seen": 1794803465.201196,
+    "mtime": 1794805077.5326133,
+    "seen": 1794805210.38631,
     "ast_hash": "23342cb1a90b4a84706dcbb68569485e",
     "semantic_hash": "23342cb1a90b4a84706dcbb68569485e"
   },
@@ -450,50 +450,50 @@
     "semantic_hash": "f1abf688a65f04fde2f23fe8bf05eb04"
   },
   "web/public/data/bills.json": {
-    "mtime": 1794803275.4609234,
-    "seen": 1794803465.2012005,
+    "mtime": 1794805106.3673806,
+    "seen": 1794805210.386312,
     "ast_hash": "9f73deab7599e954f51090b75d816aca",
     "semantic_hash": "9f73deab7599e954f51090b75d816aca"
   },
   "web/public/data/faults.json": {
-    "mtime": 1794803248.1148567,
-    "seen": 1794803465.2012026,
+    "mtime": 1794805077.5402966,
+    "seen": 1794805210.386313,
     "ast_hash": "89bf3ebf1d715a39c33bedd0924a3a84",
     "semantic_hash": "89bf3ebf1d715a39c33bedd0924a3a84"
   },
   "web/public/data/forecast_days.json": {
-    "mtime": 1794803264.51431,
-    "seen": 1794803465.2012053,
+    "mtime": 1794805095.0463347,
+    "seen": 1794805210.386314,
     "ast_hash": "9bd51c2f8aa58784549dde226d86dcf5",
     "semantic_hash": "9bd51c2f8aa58784549dde226d86dcf5"
   },
   "web/public/data/forecast_whatif.json": {
-    "mtime": 1794803275.393157,
-    "seen": 1794803465.2012076,
+    "mtime": 1794805106.307817,
+    "seen": 1794805210.386315,
     "ast_hash": "2564cd9706aaa938614709c75d69bf37",
     "semantic_hash": "2564cd9706aaa938614709c75d69bf37"
   },
   "web/public/data/hotels.json": {
-    "mtime": 1794803247.7650933,
-    "seen": 1794803465.20121,
+    "mtime": 1794805077.1909866,
+    "seen": 1794805210.386316,
     "ast_hash": "1dfcf0d9141a5ef3b36ce4f8d8dec756",
     "semantic_hash": "1dfcf0d9141a5ef3b36ce4f8d8dec756"
   },
   "web/public/data/hourly_GGN.json": {
-    "mtime": 1794803247.542281,
-    "seen": 1794803465.2012124,
+    "mtime": 1794805076.9264424,
+    "seen": 1794805210.386317,
     "ast_hash": "e8ef0175534f96ba3ef4be52f3ad362c",
     "semantic_hash": "e8ef0175534f96ba3ef4be52f3ad362c"
   },
   "web/public/data/hourly_GOA.json": {
-    "mtime": 1794803247.750697,
-    "seen": 1794803465.2012146,
+    "mtime": 1794805077.1750066,
+    "seen": 1794805210.3863177,
     "ast_hash": "dd71884953ff6fcb522f5c41171d1ad9",
     "semantic_hash": "dd71884953ff6fcb522f5c41171d1ad9"
   },
   "web/public/data/hourly_JAI.json": {
-    "mtime": 1794803247.6754835,
-    "seen": 1794803465.2012165,
+    "mtime": 1794805077.0459785,
+    "seen": 1794805210.386319,
     "ast_hash": "5086bd305131dbefd202f74b4a4ff8ce",
     "semantic_hash": "5086bd305131dbefd202f74b4a4ff8ce"
   },
@@ -870,8 +870,8 @@
     "semantic_hash": "89b8b6b4905575df958380676724691e"
   },
   "web/public/data/live_feed/bill_changes.json": {
-    "mtime": 1794802717.2741623,
-    "seen": 1794803465.2013836,
+    "mtime": 1794803479.7774034,
+    "seen": 1794805210.3863835,
     "ast_hash": "f64c2ab38df92156b13ed8e5a442956b",
     "semantic_hash": "f64c2ab38df92156b13ed8e5a442956b"
   },
@@ -906,9 +906,9 @@
     "semantic_hash": "495a01de0b659607b0beed1b4dad71d3"
   },
   "web/public/data/live_feed/savings.json": {
-    "mtime": 1794802724.045929,
-    "seen": 1794803465.201397,
-    "ast_hash": "e8070303af8e0d9a29f3d4819f69d756",
+    "mtime": 1794803487.7975016,
+    "seen": 1794805210.3863895,
+    "ast_hash": "2b452bab146e380c1d0cf35fa3209e94",
     "semantic_hash": ""
   },
   "web/public/data/plan/2026-10-02.json": {
@@ -1542,14 +1542,14 @@
     "semantic_hash": "8b1da660fce6cd72495041d8a53c13fe"
   },
   "web/public/data/quality.json": {
-    "mtime": 1794803255.9035258,
-    "seen": 1794803465.2016695,
+    "mtime": 1794805085.9907095,
+    "seen": 1794805210.3864996,
     "ast_hash": "ddc3017ae75b365483678f1a0d3e35b3",
     "semantic_hash": "ddc3017ae75b365483678f1a0d3e35b3"
   },
   "web/public/data/rating_set.json": {
-    "mtime": 1794803255.915154,
-    "seen": 1794803465.2016716,
+    "mtime": 1794805086.003018,
+    "seen": 1794805210.3865008,
     "ast_hash": "94a2cd5781cc1b0a387a3a1fe7fee7ae",
     "semantic_hash": "94a2cd5781cc1b0a387a3a1fe7fee7ae"
   },
@@ -1638,8 +1638,8 @@
     "semantic_hash": "061e57614004e4c1641350efe4cdfcc3"
   },
   "web/public/data/savings.json": {
-    "mtime": 1794803252.198697,
-    "seen": 1794803465.2017052,
+    "mtime": 1794805081.8087287,
+    "seen": 1794805210.3865168,
     "ast_hash": "af98970fee7d223f7932b4f912a553f0",
     "semantic_hash": ""
   },
@@ -1776,9 +1776,9 @@
     "semantic_hash": ""
   },
   "web/src/plan.ts": {
-    "mtime": 1794795452.260343,
-    "seen": 1794803465.2017686,
-    "ast_hash": "5a9466cf7d9fbee51f8b2191cbb67e54",
+    "mtime": 1794804984.3371363,
+    "seen": 1794805210.386544,
+    "ast_hash": "286faefffc50bb54b4dbad6d7acb5f45",
     "semantic_hash": ""
   },
   "web/src/planApi.ts": {
@@ -1824,9 +1824,9 @@
     "semantic_hash": "e48c77f30ac425249ba4023ade38ac36"
   },
   "CLAUDE.md": {
-    "mtime": 1794803367.9103572,
-    "seen": 1794803465.2017915,
-    "ast_hash": "1dc2f74cf28822d92efd018f27e5a97d",
+    "mtime": 1794805207.9298983,
+    "seen": 1794805210.3865526,
+    "ast_hash": "6db528b6730b89f851b063b9e8b471cc",
     "semantic_hash": ""
   },
   "CONTEXT.md": {
@@ -1866,8 +1866,8 @@
     "semantic_hash": "a7007632d490591fa336a8657180254c"
   },
   "data/live/savings_live.md": {
-    "mtime": 1794803232.3521032,
-    "seen": 1794803465.201809,
+    "mtime": 1794805076.2347977,
+    "seen": 1794805210.386561,
     "ast_hash": "88bb7719c631e23026a9cad389c322f0",
     "semantic_hash": ""
   },
@@ -1944,9 +1944,9 @@
     "semantic_hash": ""
   },
   "tests/test_site_plan.py": {
-    "mtime": 1794795377.103755,
-    "seen": 1794803465.201116,
-    "ast_hash": "08b574f91f0fe5f0eeade19af4b370c8",
+    "mtime": 1794805010.2445543,
+    "seen": 1794805210.3862689,
+    "ast_hash": "c68078eed19b9301fec33f0eba1a8a7a",
     "semantic_hash": ""
   },
   "tools/night_baseload.py": {

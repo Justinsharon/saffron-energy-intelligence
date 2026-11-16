@@ -8,6 +8,7 @@ export const TR_MARGIN = 1.1;
 export const CHW_STD = 7.0, CHW_RESET = 8.0, CHW_FLOOR = 6.5;
 export const RESET_BELOW_C = 24;
 export const SETPOINT_PCT_PER_C = 0.035;
+export const CHW_MIN_H = 3, STAGE_MIN_H = 2;   // setpoint held >= 3 h (short blocks go to the safer 7.0 °C); no chiller switch for < 2 h unless the load needs it
 const PEAK: [number, number] = [18, 22], OFFPEAK: [number, number] = [23, 5];
 export const DEMAND_WATCH_KVA = 920, CD_KVA = 1000;
 const LAUNDRY_KW = 95;
@@ -71,6 +72,58 @@ export function windows<T>(keys: T[]): [number, number, T][] {
   for (let h = 1; h <= keys.length; h++) if (h === keys.length || keys[h] !== keys[s]) { out.push([s, h, keys[s]]); s = h; }
   return out;
 }
+/** No setpoint block shorter than CHW_MIN_H: a short 8.0 °C block goes back to 7.0 °C; a short 7.0 °C block grows into its longer 8.0 °C neighbour. */
+export function holdSetpoint(want: number[]): number[] {
+  const sp = [...want];
+  for (;;) {
+    const w = windows(sp);
+    if (w.length === 1) return sp;
+    const hi = w.find(([s, e, v]) => v > CHW_STD && e - s < CHW_MIN_H);
+    if (hi) { for (let h = hi[0]; h < hi[1]; h++) sp[h] = CHW_STD; continue; }
+    const i = w.findIndex(([s, e]) => e - s < CHW_MIN_H);
+    if (i < 0) return sp;
+    const nb = [i + 1, i - 1].filter((j) => j >= 0 && j < w.length);
+    let j = nb[0];
+    for (const k of nb) if (w[k][1] - w[k][0] > w[j][1] - w[j][0]) j = k;
+    sp[j > i ? w[j][0] : w[j][1] - 1] = CHW_STD;
+  }
+}
+export function heldNote(want: number[], s: number, e: number): string {
+  let n = 0; for (let h = s; h < e; h++) if (want[h] > CHW_STD) n++;
+  return n ? ` Includes ${n} h where 8.0 °C was possible, kept at 7.0 °C (the safer setting) so the setpoint does not change for less than ${CHW_MIN_H} h.` : "";
+}
+/** No chiller switch for less than STAGE_MIN_H: a short smaller stage joins the next bigger neighbour unless that breaks the two-chiller guardrail. */
+export function holdStages(keys: string[], tr: number[], rank: Record<string, number>, twoOk: (k: string, tr: number) => boolean): string[] {
+  const out = [...keys];
+  let changed = true;
+  while (changed) {
+    changed = false;
+    const w = windows(out);
+    for (let i = 0; i < w.length; i++) {
+      const [s, e, k] = w[i];
+      if (e - s >= STAGE_MIN_H || w.length === 1) continue;
+      const up = [i - 1, i + 1].filter((j) => j >= 0 && j < w.length).map((j) => w[j])
+        .filter((n) => rank[n[2]] > rank[k] && tr.slice(s, e).every((x) => twoOk(n[2], x)));
+      if (up.length) {
+        let t = up[0]; for (const n of up) if (rank[n[2]] < rank[t[2]]) t = n;
+        for (let h = s; h < e; h++) out[h] = t[2];
+        changed = true; break;
+      }
+    }
+  }
+  return out;
+}
+export function stageNote(w: [number, number, string][], i: number, raw: string[], rank: Record<string, number>, need: string, guard: string): string {
+  const [s, e, k] = w[i];
+  let out = "", lower = 0;
+  for (let h = s; h < e; h++) if (rank[raw[h]] < rank[k]) lower++;
+  if (lower) out += ` Includes ${lower} h a smaller stage could carry, kept on this stage so the chillers do not switch for less than ${STAGE_MIN_H} h.`;
+  if (e - s < STAGE_MIN_H && w.length > 1) {
+    const nb = [i - 1, i + 1].filter((j) => j >= 0 && j < w.length).map((j) => w[j][2]);
+    out += nb.some((n) => rank[n] < rank[k]) ? ` Only ${e - s} h, but the load needs it: ${need}.` : ` Only ${e - s} h: joining the neighbouring stage would ${guard}.`;
+  }
+  return out;
+}
 export function parseBooking(b: Booking): [number, number] {
   const sh = Number(b.start.slice(0, 2)), eh = Number(b.end.slice(0, 2)), em = Number(b.end.slice(3, 5));
   let e = b.end === "23:59" ? 25 : eh + (em > 0 ? 1 : 0);
@@ -113,12 +166,16 @@ export function composeDay(day: PlanDay, inp: Inputs = {}) {
 export function planDay(hourlyTr: number[], hourlyKva: number[], tempC: number[], bookings: Booking[], pf: number, ref: PlanRef, tariff: Tariff): Action[] {
   const rate = (tariff.energy + tariff.fsa + tariff.duty) / pf;
   const acts: Action[] = [];
-  const st = hourlyTr.map(stage);
-  for (const [s, e, key] of windows(st)) {
+  const raw = hourlyTr.map(stage);
+  const rank: Record<string, number> = { "CH-3": 0, "CH-1": 1, "CH-1+CH-3": 2 };
+  const st = holdStages(raw, hourlyTr, rank, (k, tr) => k !== "CH-1+CH-3" || tr >= CH3_MAX);
+  const sw = windows(st);
+  for (let i = 0; i < sw.length; i++) {
+    const [s, e, key] = sw[i];
     const trs = hourlyTr.slice(s, e);
     let sav = 0;
     for (let h = s; h < e; h++) {
-      const p = kwtrPlan(hourlyTr[h], ref.curve), ly = ref.kwtr_ly[h];
+      const p = key !== "CH-1+CH-3" ? kwtrPlan(hourlyTr[h], ref.curve) : null, ly = ref.kwtr_ly[h];
       if (p != null && ly != null) sav += hourlyTr[h] * Math.max(0, ly - p) * rate;
     }
     const lo = Math.min(...trs), hi = Math.max(...trs);
@@ -127,10 +184,12 @@ export function planDay(hourlyTr: number[], hourlyKva: number[], tempC: number[]
     const why = ({ "CH-3": `Cooling load ${f0(lo)}–${f0(hi)} TR stays under 130 TR with a 10 % margin, so the small chiller carries it alone at its best efficiency.`,
       "CH-1": `Cooling load ${f0(lo)}–${f0(hi)} TR is too much for CH-3 (130 TR with margin) but within CH-1 alone (280 TR); one chiller at good part load beats two lightly loaded.`,
       "CH-1+CH-3": `Cooling load ${f0(lo)}–${f0(hi)} TR needs more than one chiller (280 TR with margin).` } as Record<string, string>)[key] + cap;
-    acts.push({ kind: "plan", group: "chillers", start: hh(s), end: hh(e), equipment: "Chillers (CH-1, CH-3)", setting, reason: why, saving_inr: sav, guardrail: GUARD.chillers, min_tr: lo, max_tr: hi });
+    const whyAll = why + stageNote(sw, i, raw, rank, "a smaller stage cannot carry this load with the 10 % margin", "run two chillers below 130 TR, which is never allowed");
+    acts.push({ kind: "plan", group: "chillers", start: hh(s), end: hh(e), equipment: "Chillers (CH-1, CH-3)", setting, reason: whyAll, saving_inr: sav, guardrail: GUARD.chillers, min_tr: lo, max_tr: hi });
   }
 
-  const sp = Array.from({ length: 24 }, (_, h) => (tempC[h] < RESET_BELOW_C && stage(hourlyTr[h]) !== "CH-1+CH-3" ? CHW_RESET : CHW_STD));
+  const want = Array.from({ length: 24 }, (_, h) => (tempC[h] < RESET_BELOW_C && st[h] !== "CH-1+CH-3" ? CHW_RESET : CHW_STD));
+  const sp = holdSetpoint(want);
   for (const [s, e, v] of windows(sp)) {
     let sav = 0;
     const pcts = hourlyTr.slice(s, e).map((x) => chwPct(x, ref));
@@ -141,7 +200,8 @@ export function planDay(hourlyTr: number[], hourlyKva: number[], tempC: number[]
     const src = ref.chw_pct_per_c?.length ? "measured on these chillers" : "engineering guide";
     const why = v > CHW_STD ? `Outdoor ${f0(Math.min(...t))}–${f0(Math.max(...t))} °C and one chiller running: warmer chilled water still holds comfort and saves about ${span} of chiller power per °C at this load (${src}).`
       : "Standard setting: outdoor 24 °C or warmer, or two chillers needed.";
-    acts.push({ kind: "plan", group: "chw", start: hh(s), end: hh(e), equipment: "Chilled-water supply setpoint", setting: `${v.toFixed(1)} °C`, reason: why, saving_inr: sav, guardrail: GUARD.chw, setpoint_c: v });
+    const whyAll = why + heldNote(want, s, e);
+    acts.push({ kind: "plan", group: "chw", start: hh(s), end: hh(e), equipment: "Chilled-water supply setpoint", setting: `${v.toFixed(1)} °C`, reason: whyAll, saving_inr: sav, guardrail: GUARD.chw, setpoint_c: v });
   }
 
   for (const bk of bookings) {
