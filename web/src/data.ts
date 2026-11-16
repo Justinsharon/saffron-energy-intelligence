@@ -41,7 +41,12 @@ export interface WhatIf { template: string; temps: number[]; guests: number[]; g
 export interface Measure { site: Site; hotel: string; measure: string; category: string; inr: number; pct_of_site_bill: number; basis: string; safety: string; confidence: string; payback?: string | null }
 export interface SavingsTotals { group_bill: number; operations_inr: number; capital_inr: number; with_capital_inr: number; operations_pct: number; with_capital_pct: number; text: string }
 export interface OptionC { cv_rmse_hourly: number; nmbe: number; cv_rmse_monthly: number; fsu_at_8pct: number; min_verifiable_pct: number; monthly: { month: string; actual: number; baseline: number }[] }
-export interface Savings { measures: Measure[]; not_sized: string[]; option_c: Record<Site, OptionC>; group_bill: number; target: [number, number]; totals: SavingsTotals }
+export interface NightRow { label: string; channel: string; typical_kw: number; good_kw: number; excess_kw: number; share: number; ac1: number; kwh: number; inr: number;
+  loose_inr: number; status: string; cause: string; walk: string }
+export interface NightAudit { hotels: Record<Site, { inr: number; loose_inr: number; bill: number; rate: number; rows: NightRow[] }>;
+  live: Record<Site, { inr: number; bill: number }> | null; checklist: { area: string; check: string }[]; hours: string; method: string }
+export interface Savings { measures: Measure[]; not_sized: string[]; option_c: Record<Site, OptionC>; group_bill: number; target: [number, number]; totals: SavingsTotals;
+  night?: NightAudit }
 export interface Quality {
   frozen: Record<string, number>; full: Record<string, number>; tests: { id: string; result: string; detail: string }[];
   bms: { alarms: number; precision: number; recall: number; closed_no_action: number; median_action_h: number };

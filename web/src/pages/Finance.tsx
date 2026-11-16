@@ -87,6 +87,7 @@ export default function Finance() {
 
       {now >= "2026-10-02" && <MonthSavingsPanel now={now} />}
       {sv && <SavingsBlock sv={sv} />}
+      {sv?.night && <NightPanel night={sv.night} />}
       {sv && <OptionC sv={sv} />}
     </>
   );
@@ -164,7 +165,10 @@ function SavingsBlock({ sv }: { sv: Savings }) {
             { label: `With one capital item ${t.with_capital_pct.toFixed(1)}%`, v: t.with_capital_inr },
             { label: `From operations ${t.operations_pct.toFixed(1)}%`, v: t.operations_inr },
           ]} />
-          <p className="small" style={{ marginTop: 0 }}>Day-to-day waste is about 3% of the bill. The daily plan stops that waste before it starts, but it is the same waste, so it adds little on top. Reaching 8% needs a night base-load audit at Gurugram or more capital items.</p>
+          <p className="small" style={{ marginTop: 0 }}>Day-to-day waste the alerts catch is about {(sv.measures.filter((m) => m.measure.startsWith("Act on detected waste")).reduce((x, m) => x + m.inr, 0) / sv.group_bill * 100).toFixed(1)}% of the bill. The daily plan stops that waste before it starts, but it is the same waste, so it adds little on top.
+            {sv.night && (Object.values(sv.night.hotels).some((h) => h.inr > 0)
+              ? " The night base-load audit adds what repeats night after night (below)."
+              : " The night base-load audit (below) found no night draw that stays above each hotel's own good nights, so reaching 8% needs a night walk-round to switch areas off, or more capital items.")}</p>
         </div>
       </div>
       <div className="panel scroll-x" style={{ marginTop: 14 }}>
@@ -175,6 +179,41 @@ function SavingsBlock({ sv }: { sv: Savings }) {
               <td>{CATEGORY[m.category] ?? m.category}</td><td className="r">{inr(m.inr)}</td><td className="small">{CONFIDENCE(m.confidence)}</td><td className="small">{m.safety}</td></tr>
           ))}</tbody>
         </table>
+      </div>
+    </>
+  );
+}
+
+/** Night base load 00:00–05:00: each sub-meter channel against its own good nights (tools/night_baseload.py), and the walk-round checklist. */
+function NightPanel({ night }: { night: NonNullable<Savings["night"]> }) {
+  const [site, setSite] = useState<Site>("GGN");
+  const h = night.hotels[site];
+  const claimed = SITES.reduce((x, s) => x + night.hotels[s].inr, 0);
+  const shown = [...h.rows].filter((r) => !r.status.startsWith("excluded")).sort((a, b) => b.inr - a.inr || b.typical_kw - a.typical_kw);
+  const excluded = h.rows.filter((r) => r.status.startsWith("excluded"));
+  return (
+    <>
+      <div className="section-title"><h2>Night base load ({night.hours})</h2><SiteSwitch value={site} all={false} onChange={(x) => x !== "ALL" && setSite(x)} /></div>
+      <div className="panel">
+        <p style={{ marginTop: 0 }}><strong>{claimed > 0 ? `${inr(claimed)} a year across the three hotels` : "No persistent night excess found"}</strong>
+          {" "}· {SITE_NAME[site]}: {h.inr > 0 ? `${inr(h.inr)} a year (${(h.inr / h.bill * 100).toFixed(2)}% of its bill)` : "every audited channel is at its own good-night level"}.
+          {h.loose_inr > h.inr && ` Night-to-night scatter worth ${inr(h.loose_inr)} is not counted: it does not repeat from one night to the next.`}
+          {night.live && ` Live year (synthetic) check: ${inr(night.live[site].inr)}; its copied weeks make nights alike, so it is not a claim.`}</p>
+        <div className="scroll-x">
+          <table className="t">
+            <thead><tr><th>Channel</th><th className="r">Typical night</th><th className="r">Good night</th><th className="r">Excess</th><th className="r">Nights above</th><th className="r">Saves a year</th><th>Finding</th></tr></thead>
+            <tbody>{shown.map((r) => (
+              <tr key={r.channel}><td>{r.label}</td><td className="r">{r.typical_kw.toFixed(1)} kW</td><td className="r">{r.good_kw.toFixed(1)} kW</td>
+                <td className="r">{r.excess_kw > 0 ? `${r.excess_kw.toFixed(2)} kW` : "—"}</td><td className="r">{Math.round(r.share * 100)}%</td>
+                <td className="r">{r.inr > 0 ? inr(r.inr) : "—"}</td><td className="small">{r.status}{r.inr > 0 && r.cause ? `: ${r.cause}` : ""}</td></tr>
+            ))}</tbody>
+          </table>
+        </div>
+        <details className="more-info"><summary>Not audited at night ({excluded.length}): must run, or counted elsewhere</summary>
+          <ul className="small">{excluded.map((r) => <li key={r.channel}><strong>{r.label}</strong>: {r.status.replace("excluded: ", "")}</li>)}</ul></details>
+        <h3>Night walk-round checklist (02:00)</h3>
+        <table className="t"><tbody>{night.checklist.map((c) => <tr key={c.area}><td style={{ whiteSpace: "nowrap" }}><strong>{c.area}</strong></td><td className="small">{c.check}</td></tr>)}</tbody></table>
+        <p className="tech" style={{ marginBottom: 0 }}>{night.method} Recommend only: guest rooms, lifts, safety systems and chilled water for occupied rooms are never touched.</p>
       </div>
     </>
   );

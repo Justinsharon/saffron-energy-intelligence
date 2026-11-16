@@ -119,7 +119,7 @@ export function measureGroup(m: string): string {
   if (m.startsWith("Daily operating plan")) return "Daily plan: lower peak demand";
   return m;
 }
-export const CATEGORY: Record<string, string> = { Energy: "Use less", ToD: "Use at cheaper times", Demand: "Lower peak charges", Capital: "Needs investment" };
+export const CATEGORY: Record<string, string> = { Energy: "Use less", ToD: "Use at cheaper times", Demand: "Lower peak charges", Capital: "Needs investment", "Night base load (audit)": "Use less at night" };
 export const CONFIDENCE = (c: string) => (c.startsWith("High") ? "Measured" : c.startsWith("Medium") ? "Estimated" : "Rough estimate");
 
 export const LOAD: Record<string, string> = {

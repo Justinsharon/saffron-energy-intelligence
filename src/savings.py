@@ -10,6 +10,9 @@ Data faults are never savings (T5): fault hours are excluded everywhere via `val
 Two totals, always reported together: operations (every row except Capital) and with capital (+ the one capital item, pump VFDs).
 On the live year (SAFFRON_DATA=data/live) one more row is added: the daily operating plan's demand saving in months without a penalty,
 the only part of the plan not already counted by the alert and breach rows (tools/plan_savings_live.py).
+Night base load (audit): channels whose 00-05 h draw stays above their own good nights, night after night (tools/night_baseload.py). The
+claim always comes from the ORIGINAL year's audit (the live year is a check on synthetic data); public-lighting kWh only beyond the night-lighting
+row, so nothing is counted twice. Rows appear only for channels with a clear repeatable excess.
 """
 import json
 import math
@@ -29,6 +32,7 @@ PF_TARGET = 0.99
 NIGHT_LIGHT_CUT = 0.30          # assumption: corridor / facade / landscape lighting dimmed or sensor-switched after midnight
 VFD_SHARE = 0.30                # capital: typical saving converting constant-speed pumps to variable flow
 CAPITAL = "Capital"
+NIGHT = "Night base load (audit)"
 LIVE_YEAR = CLEAN != DEFAULT_CLEAN
 
 
@@ -52,6 +56,14 @@ def _chw_per_degc() -> float:
         for m, c in zip(mods, cur):
             m.CLEAN = c
     return float(pen.min() / 1.5)
+
+
+@lru_cache(maxsize=1)
+def night_audit() -> dict:
+    """The night base-load audit on the original year (the claim) and, if present, the live year (a check)."""
+    sys.path.insert(0, str(ROOT / "tools"))
+    import night_baseload as NB
+    return dict(orig=NB.audit(NB.ORIG), live=NB.audit(NB.LIVE) if (NB.LIVE / "sub_ggn_hourly.parquet").exists() else None)
 
 
 @lru_cache(maxsize=1)
@@ -147,6 +159,19 @@ def plan() -> pd.DataFrame:
                          basis=f"{lt:,.0f} kWh/yr of lighting between 00:00 and 06:00 (night mean {d[d.timestamp.dt.hour.between(0, 5)].lighting_kw.mean():.0f} kW vs "
                                f"{d[d.timestamp.dt.hour.between(6, 17)].lighting_kw.mean():.0f} kW by day) × {NIGHT_LIGHT_CUT:.0%} assumed",
                          safety="Emergency and exit lighting untouched; security walks the areas before levels are set", confidence="Low (assumed share)"))
+        # 7. Night base load (audit): clear, repeatable excess over the channel's own good nights (original-year audit)
+        night_lt_kwh = lt * NIGHT_LIGHT_CUT * d[d.timestamp.dt.hour.between(0, 4)].lighting_kw.sum() / max(lt, 1e-9)   # the lighting row's 00-05 h kWh
+        a = night_audit()["orig"][s]
+        for r in a["table"][a["table"].kwh > 0].itertuples():
+            kwh = r.kwh - (night_lt_kwh if r.channel in ("lighting_public_kw", "lighting_kw") else 0.0)
+            if kwh <= 0:
+                continue
+            rows.append(dict(site=s, measure=f"Night base load: {r.label} 00:00–05:00 back to its good-night level ({r.good_kw:.1f} kW)", category=NIGHT,
+                             inr=kwh * a["rate"],
+                             basis=f"Median night {r.excess_kw:.2f} kW above the 10th–20th percentile of similar nights (occupancy, temperature), on "
+                                   f"{r.share:.0%} of nights and persisting night to night (r = {r.ac1:.2f}); {kwh:,.0f} kWh/yr at the off-peak price",
+                             safety="Recommend only; a night walk-round confirms the cause first. Guest rooms, lifts, safety systems and chilled water "
+                                    "for occupied rooms are never touched", confidence="Medium (needs a night walk-round to confirm)"))
         if s == "GGN":
             sub = pd.read_parquet(CLEAN / "sub_ggn_hourly.parquet")
             pk = (sub.chw_pumps_kw + sub.cw_pumps_ct_kw).sum()
@@ -171,7 +196,8 @@ def plan() -> pd.DataFrame:
 
 NOT_SIZED = [
     "Unsold-room setback via PMS: guest-room FCU/plug load already scales with rooms sold (≈0.2 kW per sold room, ~0 for unsold), so little to gain.",
-    "Night base load (GGN ~330 kW 01–05 h): 8–14 % of energy is unmetered 'other'; needs a walk-through audit, not sizable from data.",
+    "Night base load (00–05 h): audited per sub-meter channel against each channel's own good nights (data/night_baseload.md); only a persistent "
+    "excess is counted. Cutting below the best nights the meters have seen (switching areas off) needs the night walk-round, not data.",
     "Other capital measures (chiller replacement, solar, heat recovery) are out of scope; pump VFDs are the one capital item, counted only in the with-capital total.",
 ]
 
