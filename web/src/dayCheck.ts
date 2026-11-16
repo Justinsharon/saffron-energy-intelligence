@@ -1,7 +1,7 @@
 // Plan vs actual for the day on screen (the hotel selected on Today; Gurugram when all hotels are shown): the saved plan if there is one, else the API's suggested plan; checked up to the hour
 // shown (live: now; looking back: that hour). Used by the Today's plan card and to put PLAN_DEVIATION alerts into Today's alerts.
 import { useEffect, useState } from "react";
-import { checkPlan, type CheckResult } from "./planApi";
+import { checkPlan, RETRY_TIMEOUT_MS, type CheckResult } from "./planApi";
 import { checkActions, type PlanView } from "./planlog";
 import { loadPlan } from "./planStore";
 import type { PlanSite } from "./plan";
@@ -20,6 +20,11 @@ export function useDayCheck(now: string, site: PlanSite = "GGN"): DayCheck | und
       const acts = view?.plan ? checkActions(view) : undefined;
       const check = await checkPlan(date, `${hour}:00`, acts, acts ? "saved" : undefined, site);
       if (on) setV({ view, check, site });
+      // no answer (often a cold start): keep what is shown, ask once more in the background with a longer wait
+      if (!check) {
+        const again = await checkPlan(date, `${hour}:00`, acts, acts ? "saved" : undefined, site, RETRY_TIMEOUT_MS);
+        if (on && again) setV({ view, check: again, site });
+      }
     })();
     return () => { on = false; };
   }, [date, hour, site]);
