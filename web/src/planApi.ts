@@ -1,5 +1,6 @@
 // One source for a day's plan everywhere (Tomorrow's plan, Today's plan card, Ask): the plan API on Cloud Run (POST /api/plan, proxied by
-// Netlify; the frozen models run on the actual inputs), with a 4 s timeout. If it can't be reached, Gurugram's rules run in the browser on
+// Netlify; the frozen models run on the actual inputs), with a 4 s timeout. After a timeout the page asks once more in the background
+// (15 s) and swaps in the API's plan if it answers. If it can't be reached, Gurugram's rules run in the browser on
 // the exported per-day inputs (plan.ts) and the result is labelled an offline estimate; Jaipur and Goa are planned by the API only (their
 // models and per-hotel rules are not shipped to the browser). Recommend only either way.
 import { byTime, planFor, riskFor, type Action, type Booking, type PlanDay, type PlanSite, type RiskCal } from "./plan";
@@ -20,9 +21,11 @@ export interface PlanResult {
   defaults?: { rooms: number; guests: number; covers: number };      // the inputs the API used (the usual pattern where none were given)
   not_counted_inr?: number;            // Jaipur / Goa: CHW setpoint estimate, not verifiable, never in a total
   cv_rmse_pct?: { kw: number; tr: number; kva: number };
+  timed_out?: boolean;                 // offline because the API was slow (not unreachable): worth one background retry
 }
 
 export const API_TIMEOUT_MS = 4000;
+export const RETRY_TIMEOUT_MS = 15000;   // one background retry after a timeout: a cold Cloud Run start can take longer than 4 s
 
 export async function apiPlan(req: PlanRequest, base = "/api", timeoutMs = API_TIMEOUT_MS): Promise<PlanResult> {
   const ctrl = new AbortController();
@@ -60,10 +63,10 @@ export async function getPlan(req: PlanRequest, offline: { day: PlanDay | null; 
   } catch (e) {
     const err = e as Error & { status?: number };
     if (!offline.day || (req.site ?? "GGN") !== "GGN") throw err;              // Jaipur / Goa: no offline estimate
-    const why = err.name === "AbortError" ? "The planning service did not answer within 4 seconds, so this is an offline estimate worked out in your browser."
+    const why = err.name === "AbortError" ? "The planning service did not answer within 4 seconds, so this is an offline estimate worked out in your browser. Trying the service again in the background."
       : err.status === 422 ? `The planning service could not plan this: ${err.message}`
       : "The planning service could not be reached, so this is an offline estimate worked out in your browser.";
-    return offlinePlan(offline.day, req, offline.temps, offline.cal, why);
+    return { ...offlinePlan(offline.day, req, offline.temps, offline.cal, why), timed_out: err.name === "AbortError" };
   }
 }
 
@@ -97,8 +100,8 @@ async function post<T>(path: string, body: unknown, timeoutMs: number): Promise<
 
 /** Plan vs actual for a day, up to `asOf` (the server never goes past the current IST hour). actions: the saved plan's steps
  *  (checkActions) or the suggested plan shown on the page (planSource "suggested"); omitted = the API's own suggested plan. */
-export function checkPlan(date: string, asOf: string, actions?: unknown[], planSource?: "saved" | "suggested", site: PlanSite = "GGN") {
-  return post<CheckResult>("check", { date, site, as_of: asOf, actions, plan_source: planSource }, 8000);
+export function checkPlan(date: string, asOf: string, actions?: unknown[], planSource?: "saved" | "suggested", site: PlanSite = "GGN", timeoutMs = 8000) {
+  return post<CheckResult>("check", { date, site, as_of: asOf, actions, plan_source: planSource }, timeoutMs);
 }
 /** Planned vs verified plan ₹ for a month, day by day up to `asOf`; saved: {date: steps} for days with a saved plan. */
 export function monthSavings(month: string, asOf: string, saved: Record<string, unknown[]> = {}, site: PlanSite = "GGN") {

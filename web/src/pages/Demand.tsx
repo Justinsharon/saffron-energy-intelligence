@@ -8,7 +8,7 @@ import { useFeeds } from "../feed";
 import { addMs, DAY_MS, fmtD, inr, istNow, n, parse } from "../format";
 import { LOAD } from "../copy";
 import { actionId, hh, TAG, type Booking, type PlanDay, type PlanSite, type RiskCal } from "../plan";
-import { apiPlan, checkPlan, getPlan, type CheckResult, type CheckStep, type PlanResult } from "../planApi";
+import { apiPlan, checkPlan, getPlan, RETRY_TIMEOUT_MS, type CheckResult, type CheckStep, type PlanResult } from "../planApi";
 import { checkActions, type PlanView, type SavedAction } from "../planlog";
 import { loadPlan, plannerName, postPlan, setPlannerName } from "../planStore";
 import { useDayCheck } from "../dayCheck";
@@ -285,9 +285,20 @@ function TomorrowPlan() {
     let on = true;
     setPlanning(true);
     const t = setTimeout(() => {
-      getPlan({ date, site, rooms: form.rooms, guests: form.guests, covers: form.covers, bookings: form.bookings }, { day: day ?? null, temps, cal: idx?.risk ?? null })
-        .then((r) => { if (on) { setRes(r); setPlanErr(""); } })
-        .catch((e) => { if (on) { setRes(null); setPlanErr(String((e as Error).message ?? e)); } }).finally(() => on && setPlanning(false));
+      const req = { date, site, rooms: form.rooms, guests: form.guests, covers: form.covers, bookings: form.bookings };
+      getPlan(req, { day: day ?? null, temps, cal: idx?.risk ?? null })
+        .then((r) => {
+          if (!on) return;
+          setRes(r); setPlanErr("");
+          // the service timed out (often a cold start): keep the offline estimate on screen, ask once more with a longer wait, and swap in its plan if it answers
+          if (r.timed_out) apiPlan(req, "/api", RETRY_TIMEOUT_MS).then((a) => on && setRes(a)).catch(() => {});
+        })
+        .catch((e) => {
+          if (!on) return;
+          setRes(null); setPlanErr(String((e as Error).message ?? e));
+          // Jaipur / Goa have no offline estimate: after a timeout, the same single background retry
+          if ((e as Error).name === "AbortError") apiPlan(req, "/api", RETRY_TIMEOUT_MS).then((a) => { if (on) { setRes(a); setPlanErr(""); } }).catch(() => {});
+        }).finally(() => on && setPlanning(false));
     }, 600);
     return () => { on = false; clearTimeout(t); };
   }, [reqKey, baseKey, temps, idx]);

@@ -60,6 +60,8 @@ export default function App() {
   const [past, setPastRaw] = useState<string | null>(null);
   const setPast = (s: string | null) => setPastRaw(s && s > istNow() ? `${istNow().slice(0, 13)}:00` : s);   // never a future hour
   useEffect(() => { const t = setInterval(() => setReal(istNow()), 30e3); return () => clearInterval(t); }, []);
+  // wake the plan service (Cloud Run) as the app opens, so it is warm before anyone opens a plan; the answer is not used
+  useEffect(() => { fetch("/api/health").catch(() => {}); }, []);
   useEffect(() => { const f = () => setPage(readHash(view)); window.addEventListener("hashchange", f); return () => window.removeEventListener("hashchange", f); }, [view]);
   const go = (p: PageId) => { window.location.hash = `#/${p}`; setPage(p); setMore(false); window.scrollTo(0, 0); };
   const setView = (v: ViewId) => { viewStore.set(v); setViewState(v); go(home(v)); };            // switching view opens that view's home
