@@ -20,3 +20,4 @@ web/tsconfig.tsbuildinfo
 graphify-out/cache/
 graphify-out/.graphify_python
 graphify-out/.graphify_root
+graphify-out/.graphify_build_state.json
