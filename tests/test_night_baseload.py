@@ -61,6 +61,8 @@ def test_savings_rows_match_the_audit():
     for s, x in savings.night_audit()["orig"].items():
         t = x["table"]
         claimed = t[t.kwh > 0]
-        assert len(night[night.site == s]) <= len(claimed)  # lighting may be netted against the night-lighting row
-        assert night[night.site == s].inr.sum() <= claimed.inr.sum() + 1e-6
+        assert len(night[night.site == s]) == len(claimed)
+        assert abs(night[night.site == s].inr.sum() - (claimed.kwh * x["rate"]).sum()) < 1e-6
+    assert not p.measure.str.contains("public lighting 00:00").any()     # the assumed 30 % night-lighting cut is not counted
+    assert any(x.startswith("Night lighting in public areas") for x in savings.NOT_SIZED)
     assert (night.confidence == "Medium (needs a night walk-round to confirm)").all()

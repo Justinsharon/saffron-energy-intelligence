@@ -20,7 +20,7 @@ Written 11 Nov 2026 to start a dedicated UI chat. Read with `CLAUDE.md` (working
 | Time to detect, High | 1.0 h median from first appearance in the data |
 | Baseline CV(RMSE) hourly / monthly | GGN 8.3 / 3.4%, JAI 5.0 / 1.1%, GOA 5.4 / 2.8%; NMBE within ±0.1% |
 | Day-ahead peak (GGN) | MAPE 5.4%, 59% of days within ±5% |
-| Identified savings | ₹43.8 L/yr = 5.9% of the ₹7.40 cr bill; 7.1% with the pump-VFD capital note; target 8–12% |
+| Identified savings | ₹37.9 L/yr = 5.1% of the ₹7.40 cr bill; 6.3% with the pump-VFD capital note; target 8–12% |
 | Engineer trust | AI dry run 3.73/5 (labelled as AI, round 1); real raters still needed |
 
 ## 2. Who we are building for (from the brief)
@@ -74,7 +74,7 @@ Written 11 Nov 2026 to start a dedicated UI chat. Read with `CLAUDE.md` (working
 ## 8. Other open items (not UI)
 - T1 margin: an events-calendar AHU rule (post-hoc) would fire before 2.0 h.
 - Real engineer ratings (round 2) on the **Rate alerts** page; delete the `TEST-Claude` row in the gist.
-- Savings: 5.9% → 7.1% with pump VFDs (capital note); 8% needs a base-load audit and capital items.
+- Savings: 5.1% → 6.3% with pump VFDs (capital note); 8% needs a base-load audit and capital items.
 - Pitch deck and value case for 16 and 18 Nov.
 
 ## 9. Code map (UI-relevant)

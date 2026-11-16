@@ -11,8 +11,8 @@ Two totals, always reported together: operations (every row except Capital) and 
 On the live year (SAFFRON_DATA=data/live) one more row is added: the daily operating plan's demand saving in months without a penalty,
 the only part of the plan not already counted by the alert and breach rows (tools/plan_savings_live.py).
 Night base load (audit): channels whose 00-05 h draw stays above their own good nights, night after night (tools/night_baseload.py). The
-claim always comes from the ORIGINAL year's audit (the live year is a check on synthetic data); public-lighting kWh only beyond the night-lighting
-row, so nothing is counted twice. Rows appear only for channels with a clear repeatable excess.
+claim always comes from the ORIGINAL year's audit (the live year is a check on synthetic data). Rows appear only for channels with a clear
+repeatable excess. The earlier night-lighting row (an assumed 30 % cut) is no longer counted: the audit does not confirm it (see NOT_SIZED).
 """
 import json
 import math
@@ -29,7 +29,6 @@ from bills import TOD, _in_window, tariff
 from features import APP, CLEAN, DEFAULT_CLEAN, ROOT, SITES
 
 PF_TARGET = 0.99
-NIGHT_LIGHT_CUT = 0.30          # assumption: corridor / facade / landscape lighting dimmed or sensor-switched after midnight
 VFD_SHARE = 0.30                # capital: typical saving converting constant-speed pumps to variable flow
 CAPITAL = "Capital"
 NIGHT = "Night base load (audit)"
@@ -152,20 +151,10 @@ def plan() -> pd.DataFrame:
                          inr=max(cut * per_kvah - already, 0.0),
                          basis=f"{cut:,.0f} kVAh/yr less at the same kWh × ₹{per_kvah:.2f}/kVAh, minus ₹{already:,.0f} already counted for PF-drop repairs",
                          safety="No effect on guests or comfort; the panel supplier sizes the upgrade so it does not over-correct", confidence="High"))
-        # 6. Night public lighting: 00-05 h draw is above daytime at every hotel
-        lt = d[d.timestamp.dt.hour.between(0, 5)].lighting_kw.sum()
-        rows.append(dict(site=s, measure=f"Dim / sensor-switch public lighting 00:00–06:00 by {NIGHT_LIGHT_CUT:.0%} (keep egress and security lighting)",
-                         category="Energy", inr=lt * NIGHT_LIGHT_CUT * rkwh,
-                         basis=f"{lt:,.0f} kWh/yr of lighting between 00:00 and 06:00 (night mean {d[d.timestamp.dt.hour.between(0, 5)].lighting_kw.mean():.0f} kW vs "
-                               f"{d[d.timestamp.dt.hour.between(6, 17)].lighting_kw.mean():.0f} kW by day) × {NIGHT_LIGHT_CUT:.0%} assumed",
-                         safety="Emergency and exit lighting untouched; security walks the areas before levels are set", confidence="Low (assumed share)"))
-        # 7. Night base load (audit): clear, repeatable excess over the channel's own good nights (original-year audit)
-        night_lt_kwh = lt * NIGHT_LIGHT_CUT * d[d.timestamp.dt.hour.between(0, 4)].lighting_kw.sum() / max(lt, 1e-9)   # the lighting row's 00-05 h kWh
+        # 6. Night base load (audit): clear, repeatable excess over the channel's own good nights (original-year audit)
         a = night_audit()["orig"][s]
         for r in a["table"][a["table"].kwh > 0].itertuples():
-            kwh = r.kwh - (night_lt_kwh if r.channel in ("lighting_public_kw", "lighting_kw") else 0.0)
-            if kwh <= 0:
-                continue
+            kwh = r.kwh
             rows.append(dict(site=s, measure=f"Night base load: {r.label} 00:00–05:00 back to its good-night level ({r.good_kw:.1f} kW)", category=NIGHT,
                              inr=kwh * a["rate"],
                              basis=f"Median night {r.excess_kw:.2f} kW above the 10th–20th percentile of similar nights (occupancy, temperature), on "
@@ -195,6 +184,8 @@ def plan() -> pd.DataFrame:
 
 
 NOT_SIZED = [
+    "Night lighting in public areas: a 30% cut was assumed earlier; the night base-load audit does not confirm it. Check on a night walk-round "
+    "with the lighting schedule before claiming anything.",
     "Unsold-room setback via PMS: guest-room FCU/plug load already scales with rooms sold (≈0.2 kW per sold room, ~0 for unsold), so little to gain.",
     "Night base load (00–05 h): audited per sub-meter channel against each channel's own good nights (data/night_baseload.md); only a persistent "
     "excess is counted. Cutting below the best nights the meters have seen (switching areas off) needs the night walk-round, not data.",

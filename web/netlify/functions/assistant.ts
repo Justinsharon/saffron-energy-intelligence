@@ -94,7 +94,6 @@ function plainMeasure(m: string): string {
   if (m.startsWith("Hold PF")) return "upgrade the capacitor panel so the bill stops charging for wasted power";
   if (m.startsWith("Keep PF")) return "repair capacitor faults within hours";
   if (m.startsWith("Right-size")) return m.replace(/Right-size contract demand (\d[\d,]*) → (\d[\d,]*) kVA.*/, "lower the contracted power limit from $1 to $2 kVA");
-  if (m.startsWith("Dim")) return "dim corridor and outdoor lighting after midnight";
   if (m.startsWith("Avoid contract")) return "stay under the contracted power limit on hot afternoons";
   if (m.startsWith("Shift flexible")) return "move laundry, water heating and EV charging out of the evening peak";
   if (m.startsWith("CHW reset")) return "run chilled water at 8 °C on cool, quiet days";

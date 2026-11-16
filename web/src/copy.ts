@@ -99,7 +99,6 @@ export function measureName(m: string): string {
   if (m.startsWith("Hold PF")) return "Upgrade the capacitor panel so the bill stops charging for wasted power";
   if (m.startsWith("Keep PF")) return "Repair capacitor faults within hours";
   if (m.startsWith("Right-size")) return m.replace(/Right-size contract demand (\d[\d,]*) → (\d[\d,]*) kVA.*/, "Lower the contracted power limit from $1 to $2 kVA");
-  if (m.startsWith("Dim")) return "Dim corridor and outdoor lighting after midnight";
   if (m.startsWith("Avoid contract")) return "Stay under the contracted power limit on hot afternoons";
   if (m.startsWith("Shift flexible")) return m.includes("water heating") ? "Move laundry, water heating and EV charging out of the evening peak" : "Move laundry out of the evening peak";
   if (m.startsWith("CHW reset")) return "Run chilled water at 8 °C on cool, quiet days";
@@ -111,7 +110,6 @@ export function measureGroup(m: string): string {
   if (m.startsWith("Act on detected")) return "Fix the waste alerts find";
   if (m.startsWith("Hold PF") || m.startsWith("Keep PF")) return "Capacitor panel";
   if (m.startsWith("Right-size")) return "Lower contracted power limit";
-  if (m.startsWith("Dim")) return "Night lighting";
   if (m.startsWith("Avoid contract")) return "Avoid peak penalties";
   if (m.startsWith("Shift flexible")) return "Move loads off evening peak";
   if (m.startsWith("CHW reset")) return "Warmer chilled water on cool days";

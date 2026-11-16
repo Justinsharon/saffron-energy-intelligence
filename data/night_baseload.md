@@ -67,7 +67,7 @@ Night price ₹6.07/kWh (off-peak, rebate applied).
 
 Without the persistence test (b) the method would have claimed ₹9,243/yr here; that difference is random night-to-night scatter around the good-night level, not waste, so it is not counted.
 
-**Group: ₹0/yr, 0.00 % of the group bill (₹7.40 cr)** (without the persistence test: ₹46,240). Public-lighting kWh is added to the savings plan only beyond the existing night-lighting row (src/savings.py), so it is never counted twice.
+**Group: ₹0/yr, 0.00 % of the group bill (₹7.40 cr)** (without the persistence test: ₹46,240). Claimed kWh goes into the savings plan as is (src/savings.py); the earlier assumed 30 % night-lighting cut is no longer counted.
 
 **What it means.** No channel shows a persistent excess over its own good nights: the night base load is already as low as these hotels' best similar nights. Any further cut means a level lower than any night the meters have seen (switching areas or equipment off), which data cannot size; that is what the night walk-round below is for.
 

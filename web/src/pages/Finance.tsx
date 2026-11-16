@@ -87,7 +87,7 @@ export default function Finance() {
 
       {now >= "2026-10-02" && <MonthSavingsPanel now={now} />}
       {sv && <SavingsBlock sv={sv} />}
-      {sv?.night && <NightPanel night={sv.night} />}
+      {sv?.night && <NightPanel night={sv.night} notSized={sv.not_sized} />}
       {sv && <OptionC sv={sv} />}
     </>
   );
@@ -150,12 +150,12 @@ function SavingsBlock({ sv }: { sv: Savings }) {
               <Tooltip formatter={(_v: number, _k: string, p: any) => [`${inr(p.payload.inr)} (${p.payload.v.toFixed(2)}% of bill)`, ""]} />
               <Bar dataKey="base" stackId="s" fill="transparent" isAnimationActive={false} />
               <Bar dataKey="v" stackId="s" isAnimationActive={false}>
-                {groups.map((g) => <Cell key={g.k} fill={g.k.includes("investment") ? "#d8d8d8" : g.k === "Night lighting" ? "#f4b39d" : "#e8613c"} />)}
+                {groups.map((g) => <Cell key={g.k} fill={g.k.includes("investment") ? "#d8d8d8" : "#e8613c"} />)}
                 <LabelList dataKey="inr" content={(p: any) => <text x={(p.x ?? 0) + (p.width ?? 0) + 6} y={(p.y ?? 0) + (p.height ?? 0) / 2 + 4} fontSize={11} fill="#5c5c5c">{inr(p.value)}</text>} />
               </Bar>
             </BarChart>
           </ResponsiveContainer>
-          <p className="muted small" style={{ marginBottom: 0 }}>Each step adds to the one before. Light coral is a rough estimate. Grey needs investment: it is in the with-capital total only{capx[0]?.payback ? ` (payback: ${capx[0].payback})` : ""}.</p>
+          <p className="muted small" style={{ marginBottom: 0 }}>Each step adds to the one before. Grey needs investment: it is in the with-capital total only{capx[0]?.payback ? ` (payback: ${capx[0].payback})` : ""}.</p>
         </div>
         <div className="panel">
           <h3>Getting to the 8–12% goal</h3>
@@ -185,7 +185,8 @@ function SavingsBlock({ sv }: { sv: Savings }) {
 }
 
 /** Night base load 00:00–05:00: each sub-meter channel against its own good nights (tools/night_baseload.py), and the walk-round checklist. */
-function NightPanel({ night }: { night: NonNullable<Savings["night"]> }) {
+function NightPanel({ night, notSized }: { night: NonNullable<Savings["night"]>; notSized: string[] }) {
+  const lighting = notSized.find((x) => x.startsWith("Night lighting"));
   const [site, setSite] = useState<Site>("GGN");
   const h = night.hotels[site];
   const claimed = SITES.reduce((x, s) => x + night.hotels[s].inr, 0);
@@ -209,6 +210,7 @@ function NightPanel({ night }: { night: NonNullable<Savings["night"]> }) {
             ))}</tbody>
           </table>
         </div>
+        {lighting && <p className="small"><strong>Not counted:</strong> {lighting}</p>}
         <details className="more-info"><summary>Not audited at night ({excluded.length}): must run, or counted elsewhere</summary>
           <ul className="small">{excluded.map((r) => <li key={r.channel}><strong>{r.label}</strong>: {r.status.replace("excluded: ", "")}</li>)}</ul></details>
         <h3>Night walk-round checklist (02:00)</h3>
