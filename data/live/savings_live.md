@@ -4,8 +4,8 @@ The live year (Oct 2026 – Sep 2027) is **synthetic** (tools/make_live_year.py)
 
 | Year | Operations | With one capital item (pump VFDs) | Headline |
 |---|---:|---:|---|
-| Original (Oct 2025 – Sep 2026) | ₹3,789,024 (5.1%) | ₹4,655,623 (6.3%) | 5.1% from operations · 6.3% with one capital item (pump VFDs) |
-| Live (Oct 2026 – Sep 2027, synthetic) | ₹4,038,080 (5.2%) | ₹4,962,302 (6.4%) | 5.2% from operations · 6.4% with one capital item (pump VFDs) |
+| Original (Oct 2025 – Sep 2026) | ₹3,263,666 (4.4%) | ₹4,130,265 (5.6%) | 4.4% from operations · 5.6% with one capital item (pump VFDs) |
+| Live (Oct 2026 – Sep 2027, synthetic) | ₹3,381,020 (4.4%) | ₹4,305,242 (5.6%) | 4.4% from operations · 5.6% with one capital item (pump VFDs) |
 
 ## Daily operating plan, simulated on the live year (Gurugram)
 
