@@ -77,6 +77,11 @@ the current hour is ever shown, and a running alert is cut to its readings so fa
 one data year only, so Oct 2026 has no pair with Sep 2026. Peak demand: Tomorrow / Plan ahead use the Open-Meteo forecast with per-date scenarios from
 `tools/export_live_forecast.py <first_date> <days>` (files in `web/public/data/live/`; re-run before 9 Jan 2027), plus today's actual peak so far from the feed.
 Rebuild order after a data change: make_live_year → run_live_year → export_web_data (both modes) → acceptance.
+Per-user views (16 Nov, web only): "View as" in the top bar (`web/src/views.ts`, kept in localStorage): Duty engineer (Today · Needs attention ·
+Equipment · Ask; Today = the approved plan's steps with Done / Can't do, logged as `done` / `cant` events in the plans log, approved steps only), Chief engineer
+(Tomorrow's plan with today's followed / saved / missed strip), General manager (Overview: month so far vs adjusted baseline and last year, latest bill-change
+split, top problems, plan adherence), Finance controller (Savings, Bills = bill check). Other pages under "More". Bookings: save button at the bottom of the
+card ("Save bookings and plan"); changed plan steps are highlighted; approving with unsaved changes asks to save first.
 Night base-load audit (16 Nov): `tools/night_baseload.py` → `data/night_baseload.md`. Each 00–05 h sub-meter channel vs its own good nights (10th–20th
 percentile of the 30 most similar nights by occupancy and temperature); claimed only if most nights are above it by more than the ±1 % meter accuracy AND the
 excess persists night to night (lag-1 r > 2/√n). Original year: no persistent excess at any hotel, so ₹0 is claimed (the looser rule alone would give

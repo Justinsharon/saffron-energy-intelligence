@@ -7,6 +7,7 @@ import { fmtMonth, inr, n } from "../format";
 import { SiteSwitch } from "./Shift";
 import { CATEGORY, CONFIDENCE, measureGroup, measureName } from "../copy";
 import { MonthSavingsPanel } from "../components/MonthSavingsPanel";
+import { useHotel } from "../views";
 
 const LINES: [string, string][] = [
   ["bill_energy_charge_inr", "Energy"], ["bill_tod_net_inr", "Time-of-day adjustment"], ["bill_demand_charge_inr", "Peak-demand charge"],
@@ -16,9 +17,23 @@ const LINES: [string, string][] = [
 
 export default function Finance() {
   const { now } = useClock();
-  const bills = useBillsAt(now);                 // original year + live-year bills issued by now (Nov 2026 appears from 5 Dec)
   const sv = useData<Savings>("savings.json");
-  const [site, setSite] = useState<Site>("GGN");
+  return (
+    <>
+      <BillCheck title="Bills and savings" />
+      {now >= "2026-10-02" && <MonthSavingsPanel now={now} />}
+      {sv && <SavingsBlock sv={sv} />}
+      {sv?.night && <NightPanel night={sv.night} notSized={sv.not_sized} />}
+      {sv && <OptionC sv={sv} />}
+    </>
+  );
+}
+
+/** Every bill checked line by line against the tariff and our own meter: reconciled, meter fault or provisional, with the ₹ difference. */
+export function BillCheck({ title = "Bills" }: { title?: string }) {
+  const { now } = useClock();
+  const bills = useBillsAt(now);                 // original year + live-year bills issued by now (Nov 2026 appears from 5 Dec)
+  const { hotel: site, setHotel: setSite } = useHotel();
   const [sel, setSel] = useState<string | null>(null);
   const rows = bills ? bills.recon.filter((r) => r.site === site).sort((a, b) => a.month.localeCompare(b.month)) : [];
   const pick: Recon | undefined = rows.find((r) => r.month === sel) ?? rows.find((r) => r.status !== "Reconciled") ?? rows[0];
@@ -36,7 +51,7 @@ export default function Finance() {
     <>
       <div className="page-head">
         <div>
-          <h1>Bills and savings</h1>
+          <h1>{title}</h1>
           <p className="lead">Every bill is checked line by line against the tariff and our own meter. Of the last {all.length} bills, {counts.rec} match, {counts.fault} were issued on faulty meter readings and {counts.prov} is an estimate worth disputing.</p>
         </div>
         <SiteSwitch value={site} onChange={(s) => { setSite(s as Site); setSel(null); }} all={false} />
@@ -81,14 +96,9 @@ export default function Finance() {
       {bills && bills.unused_demand[site].months_on_floor > 0 && (
         <div className="guard note-warn" style={{ marginTop: 14 }}>
           <span aria-hidden>₹</span>
-          <span>{SITE_NAME[site]} is paying for power capacity it never uses. Its highest draw stayed below the minimum it is billed for ({n(bills.unused_demand[site].floor)} kVA, 75% of its {n(bills.unused_demand[site].cd)} kVA contract) in {bills.unused_demand[site].months_on_floor} of 12 months. That cost {inr(bills.unused_demand[site].paid_for_unused_inr)} this year. A lower contract is in the savings plan below.</span>
+          <span>{SITE_NAME[site]} is paying for power capacity it never uses. Its highest draw stayed below the minimum it is billed for ({n(bills.unused_demand[site].floor)} kVA, 75% of its {n(bills.unused_demand[site].cd)} kVA contract) in {bills.unused_demand[site].months_on_floor} of 12 months. That cost {inr(bills.unused_demand[site].paid_for_unused_inr)} this year. A lower contract is in the savings plan.</span>
         </div>
       )}
-
-      {now >= "2026-10-02" && <MonthSavingsPanel now={now} />}
-      {sv && <SavingsBlock sv={sv} />}
-      {sv?.night && <NightPanel night={sv.night} notSized={sv.not_sized} />}
-      {sv && <OptionC sv={sv} />}
     </>
   );
 }
@@ -222,7 +232,7 @@ function NightPanel({ night, notSized }: { night: NonNullable<Savings["night"]>;
   );
 }
 
-function OptionC({ sv }: { sv: Savings }) {
+export function OptionC({ sv }: { sv: Savings }) {
   const [site, setSite] = useState<Site>("GGN");
   const s = sv.option_c[site];
   const rows = s.monthly.map((m) => ({ ...m, month: m.month.slice(2).replace("-", "/") }));

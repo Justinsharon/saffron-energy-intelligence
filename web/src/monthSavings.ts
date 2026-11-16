@@ -80,7 +80,7 @@ export interface MonthSavings {
   hourly: Record<Site, Hourly | null>;
 }
 
-function rateOf(recon: Recon[], site: Site, month: string): number {
+export function rateOf(recon: Recon[], site: Site, month: string): number {
   const rs = recon.filter((r) => r.site === site).sort((a, b) => a.month.localeCompare(b.month));
   const r = rs.find((x) => x.month === month) ?? rs.filter((x) => x.month <= month).at(-1) ?? rs.at(-1);
   return r ? r.billed_total / Math.max(r.billed_kvah * r.pf, 1) : 0;          // average ₹ per kWh on that bill

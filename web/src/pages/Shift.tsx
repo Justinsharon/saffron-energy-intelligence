@@ -12,10 +12,10 @@ import type { Feed } from "../feedcore";
 import { fmtD, fmtDT, inr, n, parse, iso } from "../format";
 import { pickCell, useLiveDay, useWeather } from "../live";
 
-function loadAcks(): Record<string, Ack> {
+export function loadAcks(): Record<string, Ack> {
   try { return JSON.parse(localStorage.getItem("acks") || "{}"); } catch { return {}; }
 }
-function saveAcks(a: Record<string, Ack>) {
+export function saveAcks(a: Record<string, Ack>) {
   try { localStorage.setItem("acks", JSON.stringify(a)); } catch { /* private window: keep in memory */ }
 }
 

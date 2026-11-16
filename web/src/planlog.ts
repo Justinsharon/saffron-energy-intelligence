@@ -6,9 +6,11 @@ import { validate, type Action, type Booking } from "./plan";
 export interface PlanInputs { rooms: number; guests: number; covers: number; bookings: Booking[]; notes: string; temps_source: string }
 export interface SavedAction extends Action { id: string }
 export interface Version { n: number; at: string; by: string; inputs: PlanInputs; actions: SavedAction[]; total_inr: number }
-export interface LogRow { at: string; by: string; event: "submit" | "approve" | "skip" | "edit"; version?: number; action_id?: string; reason?: string; start?: string; end?: string }
+export interface LogRow { at: string; by: string; event: "submit" | "approve" | "skip" | "edit" | "done" | "cant"; version?: number; action_id?: string; reason?: string; start?: string; end?: string }
 export interface Entry { versions: Version[]; log: LogRow[] }
-export interface PlanView { date: string; storage: "gist" | "device"; plan: Version | null; decisions: Record<string, LogRow>; edits: Record<string, { start: string; end: string; by: string; at: string; reason?: string }>; log: LogRow[] }
+export interface PlanView { date: string; storage: "gist" | "device"; plan: Version | null; decisions: Record<string, LogRow>;
+  duty: Record<string, LogRow>;                         // the duty engineer's latest "done" / "can't do" per approved step (never changes the approval)
+  edits: Record<string, { start: string; end: string; by: string; at: string; reason?: string }>; log: LogRow[] }
 
 /** Storage key: Gurugram plans keep their date key (plans saved before Jaipur and Goa had plans); the others are "<date>@<SITE>". */
 export const planKey = (date: string, site: string = "GGN") => (site === "GGN" ? date : `${date}@${site}`);
@@ -34,12 +36,22 @@ export function applyEvent(entry: Entry | undefined, body: Record<string, any>, 
     e.log.push({ at, by, event: "submit", version: n });
     return e;
   }
-  if (!["approve", "skip", "edit"].includes(ev)) throw new Error("Unknown event.");
+  if (!["approve", "skip", "edit", "done", "cant"].includes(ev)) throw new Error("Unknown event.");
   const v = e.versions.at(-1);
   if (!v) throw new Error("Save the plan before approving or skipping actions.");
   const a = v.actions.find((x) => x.id === body.action_id);
   if (!a) throw new Error("That action is not in the saved plan; save the updated plan first.");
   const row: LogRow = { at, by, event: ev, version: v.n, action_id: a.id };
+  if (ev === "done" || ev === "cant") {
+    // the duty engineer reports on a step the chief engineer approved; a step that was never approved is not theirs to act on
+    const last = [...e.log].reverse().find((r) => r.version === v.n && r.action_id === a.id && (r.event === "approve" || r.event === "skip"));
+    if (last?.event !== "approve") throw new Error("Only approved steps can be marked done or can't do.");
+    if (ev === "cant") {
+      const reason = String(body.reason ?? "").trim().slice(0, 500);
+      if (!reason) throw new Error("Say why it can't be done (needed for the log).");
+      row.reason = reason;
+    }
+  }
   if (ev === "skip") {
     const reason = String(body.reason ?? "").trim().slice(0, 500);
     if (!reason) throw new Error("Give a short reason for skipping.");
@@ -61,13 +73,14 @@ export function applyEvent(entry: Entry | undefined, body: Record<string, any>, 
 /** What the page shows: the latest version, each action's latest approve/skip, and its latest edited time (for that version). */
 export function view(date: string, entry: Entry | undefined, storage: PlanView["storage"]): PlanView {
   const plan = entry?.versions.at(-1) ?? null;
-  const decisions: PlanView["decisions"] = {}, edits: PlanView["edits"] = {};
+  const decisions: PlanView["decisions"] = {}, edits: PlanView["edits"] = {}, duty: PlanView["duty"] = {};
   for (const r of entry?.log ?? []) {
     if (!plan || r.version !== plan.n || !r.action_id) continue;
     if (r.event === "approve" || r.event === "skip") decisions[r.action_id] = r;
+    if (r.event === "done" || r.event === "cant") duty[r.action_id] = r;
     if (r.event === "edit" && r.start && r.end) edits[r.action_id] = { start: r.start, end: r.end, by: r.by, at: r.at, reason: r.reason };
   }
-  return { date, storage, plan, decisions, edits, log: entry?.log ?? [] };
+  return { date, storage, plan, decisions, duty, edits, log: entry?.log ?? [] };
 }
 
 /** The saved plan as it should be checked against the meters: edited times applied, and each step's latest approve / skip attached
