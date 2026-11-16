@@ -26,6 +26,7 @@ import pandas as pd
 from scipy import stats
 
 from bills import TOD, _in_window, tariff
+from alert_cards import NOT_CLAIMED
 from features import APP, CLEAN, DEFAULT_CLEAN, ROOT, SITES
 
 PF_TARGET = 0.99
@@ -96,9 +97,10 @@ def plan() -> pd.DataFrame:
         t, pf, rkwh = _rates(s)
         c = cards[cards.site == s]
         # 1. Fix detected waste (alerts) - energy, excluding laundry (ToD) and demand (below)
-        e = c[~c.rule.isin(["LAUNDRY_IN_PEAK", "DEMAND_NEAR_CONTRACT", "POWER_FACTOR_DROP"])]
+        # CH-1 inefficiency (STAGING_KWTR, cause unknown) is shown on its alerts but not claimed: see not_sized()
+        e = c[~c.rule.isin(["LAUNDRY_IN_PEAK", "DEMAND_NEAR_CONTRACT", "POWER_FACTOR_DROP"] + sorted(NOT_CLAIMED))]
         rows.append(dict(site=s, measure="Act on detected waste alerts (staging, hand-mode AHUs, re-heat, lighting, pumps, setpoints, exhaust)",
-                         category="Energy", inr=e.cost_inr.sum(), basis=f"{len(e)} alerts over the year; ₹ from the detector, staging and CHW recalibrated to metered kW/TR (hand-mode AHU is a lower bound)",
+                         category="Energy", inr=e.cost_inr.sum(), basis=f"{len(e)} alerts over the year; ₹ from the detector, CHW recalibrated to metered kW/TR (hand-mode AHU is a lower bound); CH-1 inefficiency alerts not counted (cause unknown)",
                          safety="Each fix is approved by a person; kitchen extract fans are linked to kitchen hours, never switched off automatically", confidence="High"))
         pfa = c[c.rule == "POWER_FACTOR_DROP"]
         if len(pfa):
@@ -191,6 +193,16 @@ NOT_SIZED = [
     "excess is counted. Cutting below the best nights the meters have seen (switching areas off) needs the night walk-round, not data.",
     "Other capital measures (chiller replacement, solar, heat recovery) are out of scope; pump VFDs are the one capital item, counted only in the with-capital total.",
 ]
+
+
+def not_sized() -> list:
+    """NOT_SIZED plus the CH-1 inefficiency line, its numbers from this data folder's alert cards (never claimed)."""
+    c = pd.read_parquet(APP / "cards.parquet")
+    k = c[c.rule.isin(NOT_CLAIMED)]
+    if not len(k):
+        return list(NOT_SIZED)
+    return [f"CH-1 running near {k.ch1_kwtr.iloc[0]:.2f} kW/TR, ~{k.flagged_h.sum():,.0f} h, about ₹{k.cost_inr.sum() / 1e5:.2f} L a year: cause under "
+            "investigation, not claimed"] + NOT_SIZED
 
 
 def totals(p: pd.DataFrame | None = None) -> dict:

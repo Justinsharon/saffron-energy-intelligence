@@ -1,5 +1,8 @@
 // Plain-language wording for everything the hotel team reads. Technical detail (meter readings) stays available one tap away.
 
+/** Rules whose ₹ is shown on the alert but never counted as waste or savings until the cause is confirmed (src/alert_cards.py NOT_CLAIMED). */
+export const NOT_CLAIMED = new Set(["STAGING_KWTR"]);
+
 export const RULE: Record<string, { title: string; why: string; todo: string }> = {
   AHU_HAND_MODE: {
     title: "Banquet hall cooling left on after the event",
@@ -42,9 +45,9 @@ export const RULE: Record<string, { title: string; why: string; todo: string }> 
     todo: "Run a single chiller at night. Bring the second one on only when one can no longer keep up.",
   },
   STAGING_KWTR: {
-    title: "Two chillers likely running when one would do",
-    why: "The chiller plant is drawing about twice the power one chiller needs for this much cooling, which is what two half-loaded chillers look like. The building system shows only one running, so its status reading may also be wrong.",
-    todo: "Check at the plant room which chillers are actually on; switch off the second if one can carry the load. Report the status mismatch to the controls contractor.",
+    title: "Chiller 1 running less efficiently than normal",
+    why: "Chiller 1 is using about 60% more power than usual for this much cooling. Only Chiller 1 is running, and the weather doesn't explain it.",
+    todo: "Ask the chiller contractor to check the cooling tower and condenser (approach temperature, fouling, water flow).",
   },
   CHILLER_PART_LOAD_INEFFICIENCY: {
     title: "Chillers running inefficiently at low load",

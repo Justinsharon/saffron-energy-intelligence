@@ -19,6 +19,7 @@ import hJAI from "./data/live_feed/hourly_JAI.json";
 import hGOA from "./data/live_feed/hourly_GOA.json";
 import { feedFor, istNow as istNowFull, issued } from "../../src/feedcore";
 import { byTime, planFor, type PlanDay } from "../../src/plan";
+import { NOT_CLAIMED } from "../../src/copy";
 import { checkActions, planKey, view, type Entry } from "../../src/planlog";
 import { configured as gistReady, readJSON } from "../lib/gist";
 import days from "./data/forecast_days.json";
@@ -78,7 +79,7 @@ const LEVEL: Record<string, string> = { "BREACH RISK": "risk of going over the p
 const WASTE: Record<string, string> = {
   AHU_HAND_MODE: "banquet hall cooling left on after events", HEAT_COOL_FIGHT: "heating and cooling running together", KITCHEN_EXHAUST_OFF_HOURS: "kitchen extract fans left on after closing",
   LIGHTING_LEFT_ON: "event lighting left on", LAUNDRY_IN_PEAK: "laundry in the evening peak", POOL_PUMP_OFF_SCHEDULE: "pool pumps running round the clock",
-  POWER_FACTOR_DROP: "capacitor panel fault", CHILLER_STAGING_LOW_LOAD: "two chillers running when one would do", STAGING_KWTR: "two chillers likely running when one would do",
+  POWER_FACTOR_DROP: "capacitor panel fault", CHILLER_STAGING_LOW_LOAD: "two chillers running when one would do", STAGING_KWTR: "Chiller 1 running inefficiently, cause under investigation",
   CHILLER_PART_LOAD_INEFFICIENCY: "chillers running inefficiently at low load", CHW_SETPOINT_LOW: "chilled water set colder than needed", DEMAND_NEAR_CONTRACT: "power demand over the contracted limit",
   EV_CHARGER_NIGHT_ON: "EV charger on overnight", RESIDUAL_UNEXPLAINED: "extra use with no single cause",
 };
@@ -225,7 +226,7 @@ const TOOLS: Record<string, { fn: (a: J) => J | Promise<J>; desc: string; params
         }
         optionC = { kwh_below_adjusted_baseline: r0(kwh), inr: r0(inr) };
       }
-      const alertInr = r0(al.reduce((x, y) => x + y.cost, 0));
+      const alertInr = r0(al.filter((x) => !NOT_CLAIMED.has(x.rule)).reduce((x, y) => x + y.cost, 0));     // CH-1 inefficiency: shown, not claimed
       return { month: m, as_of: issued, hotels: Object.fromEntries(Object.entries(SITES).map(([s, name]) => [name, { bill_inr: r0(row(s, m)?.billed_total ?? 0),
         last_month_inr: row(s, prev) ? r0(row(s, prev)!.billed_total) : null, same_month_last_year_inr: row(s, ly) ? r0(row(s, ly)!.billed_total) : null,
         bill_check: row(s, m)?.status, billed_minus_our_meter_inr: r0(row(s, m)?.billed_minus_corrected ?? 0) }])),

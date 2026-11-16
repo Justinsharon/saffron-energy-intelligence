@@ -8,7 +8,7 @@ import { BILL_STATUS, EQUIPMENT, PRIORITY, RULE, SAFETY } from "../copy";
 const TAG: Record<string, [string, string]> = {
   AHU_HAND_MODE: ["AHU-BQ", "Banquet cooling"], HEAT_COOL_FIGHT: ["AHU-RH", "Re-heaters"], KITCHEN_EXHAUST_OFF_HOURS: ["KEF", "Kitchen fans"],
   LIGHTING_LEFT_ON: ["LTG", "Event lighting"], LAUNDRY_IN_PEAK: ["LDY", "Laundry"], POOL_PUMP_OFF_SCHEDULE: ["PP", "Pool pumps"],
-  POWER_FACTOR_DROP: ["APFC", "Capacitor panel"], CHILLER_STAGING_LOW_LOAD: ["CH-1/3", "Chiller plant"], STAGING_KWTR: ["CH-1/3", "Chiller plant"],
+  POWER_FACTOR_DROP: ["APFC", "Capacitor panel"], CHILLER_STAGING_LOW_LOAD: ["CH-1/3", "Chiller plant"], STAGING_KWTR: ["CH-1", "Chiller 1"],
   CHILLER_PART_LOAD_INEFFICIENCY: ["CH-A/B", "Chillers"], CHW_SETPOINT_LOW: ["CHW-SP", "Chilled water"], DEMAND_NEAR_CONTRACT: ["MAIN", "Main supply"],
   EV_CHARGER_NIGHT_ON: ["EVC", "EV chargers"], RESIDUAL_UNEXPLAINED: ["MAIN", "Whole hotel"], PLAN_DEVIATION: ["PLAN", "Daily plan"],
 };
@@ -36,9 +36,11 @@ const SIGNAL_LABEL: Record<string, string> = {
   kitchen_exhaust_kw: "Kitchen extract fans (kW)", lighting_kw: "Lighting (kW)", laundry_kw: "Laundry (kW)", pool_pump_kw: "Pool pumps (kW)",
   pf: "Power factor (1.0 is ideal)", chillers_kw: "Chillers (kW)", chiller_load_tr: "Cooling delivered (tons)",
   n_chillers: "Chillers shown running", kw_per_tr: "Chiller power per ton of cooling (lower is better)", chw_setpoint_c: "Chilled-water temperature setting (°C)",
+  chiller_ch1_kw: "Chiller 1 (kW)", chiller_ch3_kw: "Chiller 3 (kW)",
   kva_max_in_hour: "Peak power demand (kVA)", ev_chargers_kw: "EV chargers (kW)", water_heating_kw: "Water heating (kW)",
 };
-const SIG_COLORS = ["#e2a04a", "#7d64a8", "#3f8a62"];
+const SIG_COLORS = ["#e2a04a", "#7d64a8", "#3f8a62", "#3d7fb8"];
+const unit = (s: string) => (SIGNAL_LABEL[s] ?? s).match(/\(([^)]+)\)$/)?.[1] ?? s;
 
 function tick(t: string) {
   const d = parse(t);
@@ -87,11 +89,12 @@ const RATIO = new Set(["kw_per_tr", "pf", "n_chillers", "chw_setpoint_c"]);
 const STEP = new Set(["n_chillers", "chw_setpoint_c", "ev_guests"]);
 
 function SignalChart({ rows, sigs, x0, x1, height = 150 }: { rows: Record<string, number | string | null>[]; sigs: string[]; x0: string; x1: string; height?: number }) {
-  const twoAxes = sigs.length > 1;
+  const left = (s: string) => unit(s) === unit(sigs[0]);       // same unit as the first signal shares its (left) axis, e.g. Chiller 1 and 3 kW
+  const twoAxes = sigs.some((s) => !left(s));
   return (
     <>
       <div className="legend" style={{ margin: "8px 0 4px" }}>
-        {sigs.map((s, i) => <span key={s}><i style={{ background: SIG_COLORS[i % 3] }} />{SIGNAL_LABEL[s] ?? s}{twoAxes ? (i === 0 ? " (left)" : " (right)") : ""}</span>)}
+        {sigs.map((s, i) => <span key={s}><i style={{ background: SIG_COLORS[i % SIG_COLORS.length] }} />{SIGNAL_LABEL[s] ?? s}{twoAxes ? (left(s) ? " (left)" : " (right)") : ""}</span>)}
       </div>
       <ResponsiveContainer width="100%" height={height}>
         <ComposedChart data={rows} margin={{ top: 4, right: 8, bottom: 0, left: -8 }}>
@@ -102,7 +105,7 @@ function SignalChart({ rows, sigs, x0, x1, height = 150 }: { rows: Record<string
           <Tooltip labelFormatter={(t) => fmtDT(String(t) + ":00")} formatter={(v: number, k: string) => [n(v, RATIO.has(k) ? 2 : 0), SIGNAL_LABEL[k] ?? k]} />
           <ReferenceArea yAxisId="a" x1={x0} x2={x1} fill="#e8613c" fillOpacity={0.14} />
           {sigs.map((s, i) => (
-            <Line key={s} yAxisId={i === 0 ? "a" : "b"} dataKey={s} stroke={SIG_COLORS[i % 3]} dot={false} strokeWidth={1.6}
+            <Line key={s} yAxisId={left(s) ? "a" : "b"} dataKey={s} stroke={SIG_COLORS[i % SIG_COLORS.length]} dot={false} strokeWidth={1.6}
                   type={STEP.has(s) ? "stepAfter" : "linear"} isAnimationActive={false} connectNulls />
           ))}
         </ComposedChart>

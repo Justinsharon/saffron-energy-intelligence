@@ -5,7 +5,7 @@ import { Waterfall } from "../components/parts";
 import { SITE_NAME, useAlertsAt, useBillsAt, useChangesAt, type BillChange, type Site } from "../data";
 import { fmtMonth, inr, n } from "../format";
 import { SiteSwitch } from "./Shift";
-import { DRIVER } from "../copy";
+import { DRIVER, NOT_CLAIMED } from "../copy";
 
 const COMP_COLORS: Record<string, string> = {
   "Energy (kVAh)": "#151515", "Demand charge": "#a8a8a8", "Excess-demand penalty": "#c93a1c", "Fuel surcharge": "#9b9b9b",
@@ -66,7 +66,7 @@ export default function GM() {
     }
     return Object.keys(rows).sort().map((k) => rows[k]);
   }, [bills, site]);
-  const waste = useMemo(() => alerts ? alerts.filter((q) => q.site === site && q.start.slice(0, 7) === y).reduce((s, q) => s + q.cost, 0) : 0, [alerts, site, y]);
+  const waste = useMemo(() => alerts ? alerts.filter((q) => q.site === site && q.start.slice(0, 7) === y && !NOT_CLAIMED.has(q.rule)).reduce((s, q) => s + q.cost, 0) : 0, [alerts, site, y]);
   const steps = ch ? Object.entries(ch.groups).filter(([, v]) => Math.abs(v) >= 1).sort((p, q) => Math.abs(q[1]) - Math.abs(p[1])) : [];
 
   return (

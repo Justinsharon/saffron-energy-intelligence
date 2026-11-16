@@ -28,6 +28,7 @@ import pandas as pd
 ROOT = Path(__file__).resolve().parents[1]
 sys.path[:0] = [str(ROOT / "src"), str(ROOT)]
 import operating_plan as OP  # noqa: E402
+from alert_cards import NOT_CLAIMED  # noqa: E402
 
 PUB = ROOT / "web" / "public" / "data"
 OUT = PUB / "reports"
@@ -35,7 +36,7 @@ SITES = {"GGN": "Gurugram", "JAI": "Jaipur", "GOA": "Goa"}
 LIVE_START = "2026-10"
 GROWTH = 1.012                     # tools/make_live_year.py make_map: yf = 1.012 ** (1 + (d - ND / 2) / 365)
 PLANS_URL = "https://saffron-energy-intelligence1.netlify.app/.netlify/functions/plans?month="
-RULE_GROUP = {"CHILLER_STAGING_LOW_LOAD": "chillers", "STAGING_KWTR": "chillers", "CHW_SETPOINT_LOW": "chw", "AHU_HAND_MODE": "ahu",
+RULE_GROUP = {"CHILLER_STAGING_LOW_LOAD": "chillers", "CHW_SETPOINT_LOW": "chw", "AHU_HAND_MODE": "ahu",
               "LAUNDRY_IN_PEAK": "laundry", "EV_CHARGER_NIGHT_ON": "ev"}
 LEVEL = {"BREACH RISK": "risk of going over", "WARNING": "close to the limit", "STACKING WATCH": "watch the afternoon", "OK": "comfortable"}
 
@@ -120,7 +121,8 @@ def main():
                             approved_steps=appr, saved_days=len(saved))
 
         # alert savings in full; overlap = the part in hours an approved, followed plan step covered (same equipment) - display only
-        al = [x for x in alerts if x["alert_time"] <= as_of and x["start"][:7] == m and x["cost"] > 0 and x["rule"] != "PLAN_DEVIATION"]
+        al = [x for x in alerts if x["alert_time"] <= as_of and x["start"][:7] == m and x["cost"] > 0 and x["rule"] != "PLAN_DEVIATION"
+              and x["rule"] not in NOT_CLAIMED]                                 # CH-1 inefficiency: shown, not counted as waste found
         a_inr = overlap = 0.0
         for x in al:
             g = RULE_GROUP.get(x["rule"]) if x["site"] == "GGN" else None

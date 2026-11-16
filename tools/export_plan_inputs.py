@@ -97,8 +97,10 @@ def with_events(d: pd.DataFrame, rows: list) -> pd.DataFrame:
     return x
 
 
-def matched_refs(orig: pd.DataFrame, sub: pd.DataFrame, day: pd.Timestamp, tr_mean: float) -> dict:
-    """Last year's behaviour on matched days: same month, same day type (weekend or not), daily mean TR within ±15 % (else the 5 closest)."""
+def matched_refs(orig: pd.DataFrame, sub: pd.DataFrame, day: pd.Timestamp, tr_mean: float, curve: pd.Series | None = None) -> dict:
+    """Last year's behaviour on matched days: same month, same day type (weekend or not), daily mean TR within ±15 % (else the 5 closest).
+    curve (recalibration.fit()["curve"]): hours when only one chiller ran count at the normal one-chiller kW/TR for their load, so the plan's
+    staging ₹ comes only from hours two chillers actually ran - never from CH-1 alone running inefficiently (STAGING_KWTR, cause unknown)."""
     o = orig.assign(date=orig.timestamp.dt.normalize())
     daily = o.groupby("date").agg(tr=("chiller_load_tr", "mean"), month=("timestamp", lambda t: t.iloc[0].month), wk=("weekend", "first"))
     c = daily[(daily.month == day.month) & (daily.wk == int(day.day_of_week >= 5))]
@@ -110,6 +112,10 @@ def matched_refs(orig: pd.DataFrame, sub: pd.DataFrame, day: pd.Timestamp, tr_me
     s["date"] = s.timestamp.dt.normalize()
     ch = s.chiller_ch1_kw + s.chiller_ch2_kw + s.chiller_ch3_kw
     s["kwtr"] = (ch / s.chiller_load_tr).where(s.chiller_load_tr > 20)
+    if curve is not None:
+        two = ((s.chiller_ch1_kw > 5).astype(int) + (s.chiller_ch2_kw > 5) + (s.chiller_ch3_kw > 5)) >= 2
+        normal = pd.cut(s.chiller_load_tr, recalibration.BANDS).map(curve).astype(float)
+        s["kwtr"] = s.kwtr.where(two | normal.isna() | s.kwtr.isna(), normal)
     kwtr = s.groupby("hour").kwtr.mean().reindex(range(24))
     pk = s.hour.between(18, 21)
     wh_floor = s.groupby("date").water_heating_kw.transform("min")
@@ -236,7 +242,7 @@ def main(first: date, n: int):
                              kw_per_guest=cen("kw", "g+", "g-", D_GUESTS), kw_per_c=cen("kw", "t+", "t-", D_TEMP), tr_per_c=cen("tr", "t+", "t-", D_TEMP),
                              tr_per_room=cen("tr", "rooms+", "rooms-", D_ROOMS), tr_per_guest=cen("tr", "g+", "g-", D_GUESTS)),
                    banquet=banquet,
-                   ref=dict(matched_refs(orig, sub_o, d, float(np.mean(day_tr))), curve=curve, ahu_overrun_kwh=overrun, chw_pct_per_c=chw_pct))
+                   ref=dict(matched_refs(orig, sub_o, d, float(np.mean(day_tr)), F["curve"]), curve=curve, ahu_overrun_kwh=overrun, chw_pct_per_c=chw_pct))
         txt = json.dumps(rec, separators=(",", ":"), ensure_ascii=False)
         assert len(txt) < 100_000, f"{d:%Y-%m-%d}: {len(txt)} bytes"
         (OUT / f"{d:%Y-%m-%d}.json").write_text(txt, encoding="utf-8")

@@ -21,7 +21,7 @@ def main(recal: dict | None = None):
         d["pf"] = (d.grid_kwh / d.grid_kvah).where((d.grid_kvah > 0) & ~d.is_dg)
         d["kw_per_tr"] = (d.chillers_kw / d.chiller_load_tr).where(d.chiller_load_tr > 5)
         if s == "GGN":
-            sub = pd.read_parquet(CLEAN / "sub_ggn_hourly.parquet")[["timestamp", "ev_chargers_kw", "water_heating_kw", "pool_kw"]]
+            sub = pd.read_parquet(CLEAN / "sub_ggn_hourly.parquet")[["timestamp", "ev_chargers_kw", "water_heating_kw", "pool_kw", "chiller_ch1_kw", "chiller_ch3_kw"]]
             d = d.merge(sub, on="timestamp", how="left")
         d.drop(columns=["date"]).to_parquet(APP / f"frame_{s}.parquet", index=False)
         print(s, d.shape)
