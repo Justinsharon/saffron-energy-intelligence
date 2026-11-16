@@ -15,3 +15,8 @@ web/node_modules/
 web/dist/
 web/.netlify/
 web/tsconfig.tsbuildinfo
+
+# graphify: machine-local paths and extraction cache
+graphify-out/cache/
+graphify-out/.graphify_python
+graphify-out/.graphify_root
