@@ -13,7 +13,8 @@ import { TAG } from "../plan";
 import { type PlanView, type SavedAction } from "../planlog";
 import { loadPlan, plannerName, postPlan, setPlannerName } from "../planStore";
 import { useHotel } from "../views";
-import { loadAcks, saveAcks, SiteSwitch } from "./Shift";
+import { HotelCard, loadAcks, saveAcks, SiteSwitch } from "./Shift";
+import { useWeather } from "../live";
 
 const hourOf = (t: string) => Number(t.slice(0, 2)) + (t.includes("next day") ? 24 : 0);
 const t1 = (x: string) => x.replace(" (next day)", "⁺¹");
@@ -38,8 +39,11 @@ function useOpen(site: Site | "ALL") {
     const open = all.filter((a) => a.ongoing && a.channel === "Alert").sort((x, y) => costOf(y) - costOf(x));
     const closed = all.filter((a) => a.channel === "Alert" && !a.ongoing && a.end > dayAgo);
     const digest = all.filter((a) => a.channel === "Daily digest" && a.alert_time <= now && a.alert_time > dayAgo);
-    const perSite = Object.fromEntries(SITES.map((s) => [s, all.filter((a) => a.site === s && a.ongoing && a.channel === "Alert").length])) as Record<Site, number>;
-    return { open, closed, digest, perSite, faults: SITES.filter((s) => site === "ALL" || s === site).flatMap((s) => feeds.feeds[s].faults_now),
+    // every hotel's open alerts and ₹ a day at risk, for the hotel cards (whatever hotel is picked)
+    const every = SITES.flatMap((s) => feeds.feeds[s].recent_alerts).filter((a) => a.ongoing && a.channel === "Alert");
+    const perSite = Object.fromEntries(SITES.map((s) => { const xs = every.filter((a) => a.site === s);
+      return [s, { open: xs.length, stake: xs.filter((a) => a.cost_basis === "per_day").reduce((x, a) => x + a.per_day, 0) }]; })) as Record<Site, { open: number; stake: number }>;
+    return { open, closed, digest, perSite, feeds, faults: SITES.filter((s) => site === "ALL" || s === site).flatMap((s) => feeds.feeds[s].faults_now),
              updated: feeds.updated, stake: open.filter((a) => a.cost_basis === "per_day").reduce((s, a) => s + a.per_day, 0) };
   }, [feeds, dc, now, site]);
 }
@@ -120,12 +124,13 @@ function ApprovedToday({ site }: { site: Site }) {
 }
 
 export function DutyToday() {
-  const { now, go } = useClock();
+  const { now, go, live } = useClock();
   const { hotel: site, setHotel } = useHotel();
   const o = useOpen(site);
+  const wx = useWeather();
   const [acks, ack] = useAcks();
   return (
-    <div className="duty">
+    <div className="duty duty-wide">
       <div className="page-head">
         <div>
           <h1 style={{ fontSize: 22 }}>Today at {SITE_NAME[site]}</h1>
@@ -133,6 +138,8 @@ export function DutyToday() {
         </div>
         <SiteSwitch value={site} onChange={(s) => s !== "ALL" && setHotel(s)} all={false} />
       </div>
+      <div className="duty-grid">
+      <div className="duty-main">
       <ApprovedToday site={site} />
 
       <div className="section-title" id="attention"><h2>Needs attention</h2>
@@ -145,12 +152,19 @@ export function DutyToday() {
       {!o ? <p className="muted">Checking the hotel…</p> : o.open.length === 0 ? <div className="panel flat"><p style={{ margin: 0 }}>All clear: nothing needs attention at {SITE_NAME[site]} right now.</p></div>
         : o.open.map((a, i) => <Ticket key={a.id} a={a} now={now} defaultOpen={i === 0} acked={acks[a.id]} onAck={ack} />)}
 
-      {o && (
+      </div>
+      <aside className="duty-side" aria-label="Hotels">
+        <div className="section-title" style={{ marginTop: 0 }}><h2>Hotels</h2></div>
+        <div className="duty-hotels">
+          {SITES.map((s) => <HotelCard key={s} s={s} feed={o?.feeds.feeds[s]} temp={live ? wx?.now[s] : undefined} open={o?.perSite[s].open ?? 0}
+                                        atStake={o?.perSite[s].stake ?? 0} pressed={site === s} onClick={() => setHotel(s)} />)}
+        </div>
         <button className="panel flat shortcut" onClick={() => go("equipment")}>
-          <span><strong>Equipment at {SITE_NAME[site]}</strong><br /><span className="small muted">{o.open.length ? `${o.open.length} open ${o.open.length === 1 ? "issue" : "issues"}: repeat problems and patterns` : "Repeat problems and patterns"}</span></span>
+          <span><strong>Equipment at {SITE_NAME[site]}</strong><br /><span className="small muted">{o && o.open.length ? `${o.open.length} open ${o.open.length === 1 ? "issue" : "issues"}: repeat problems and patterns` : "Repeat problems and patterns"}</span></span>
           <span aria-hidden>→</span>
         </button>
-      )}
+      </aside>
+      </div>
     </div>
   );
 }
@@ -162,7 +176,7 @@ export function Attention() {
   const o = useOpen(site);
   const [acks, ack] = useAcks();
   return (
-    <div className="duty">
+    <div className="duty attention-wide">
       <div className="page-head">
         <div>
           <h1 style={{ fontSize: 22 }}>Needs attention</h1>

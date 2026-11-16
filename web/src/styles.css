@@ -84,7 +84,7 @@ main { max-width: 1240px; margin: 0 auto; padding: 30px 30px 50px; }
 }
 
 /* ---------- page ---------- */
-.page-head { display: flex; justify-content: space-between; align-items: flex-end; gap: 16px; flex-wrap: wrap; margin-bottom: 20px; }
+.page-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; flex-wrap: wrap; margin-bottom: 20px; }
 h1 { font-size: 32px; line-height: 1.15; margin: 0; font-weight: 700; letter-spacing: -0.02em; }
 h2 { font-size: 20px; margin: 28px 0 12px; font-weight: 700; letter-spacing: -0.01em; }
 h3 { font-size: 16px; margin: 0 0 6px; font-weight: 700; }
@@ -406,3 +406,27 @@ input.name { width: 180px; }
 .shortcut { display: flex; justify-content: space-between; align-items: center; width: 100%; margin-top: 16px; border: 1px solid var(--rule); cursor: pointer; text-align: left; font: inherit; color: var(--ink); }
 .big-stat b { font-size: 40px; }
 @media (max-width: 760px) { .nav { position: static; } }
+
+/* Duty engineer Today: full width; two columns on wide screens (plan + problems | hotels + Equipment) */
+.duty.duty-wide { max-width: none; }
+.duty-grid { display: grid; grid-template-columns: minmax(0, 1fr) 340px; gap: 28px; align-items: start; }
+.duty-hotels { display: grid; gap: 12px; }
+.duty-hotels .hotel { width: 100%; }
+@media (max-width: 999px) { .duty-grid { grid-template-columns: 1fr; } .duty-side { order: 2; } }
+.attention-wide { max-width: none; }
+
+/* Tomorrow's plan: date picker in the bookings card header; status chips on one wrapping line */
+.card-head { display: flex; justify-content: space-between; align-items: flex-end; gap: 12px 20px; flex-wrap: wrap; margin-bottom: 14px; }
+.plan-for { min-width: 180px; }
+.chip-row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-top: 8px; }
+.chip-row .today-strip, .chip-row .feed-note { margin: 0; white-space: normal; max-width: 100%; }
+.name-field { flex: 0 1 240px; }
+.name-field input { width: 100%; }
+.wf-small { margin: 4px 0 0; }
+.card-head { align-items: center; }
+.plan-for { flex-direction: row; align-items: center; gap: 8px; min-width: 0; }
+.plan-for input { padding: 7px 10px; font-size: 14px; }
+.page-head > .seg { margin-top: 6px; }
+.save-row { align-items: flex-end; }
+.wf-small .nw { white-space: nowrap; }
+.save-row .saved-note { margin-bottom: 11px; }

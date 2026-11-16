@@ -30,7 +30,7 @@ export interface Bills { recon: Recon[]; components: Record<Site, { billing_mont
 export interface BillChange {
   site: Site; a: string; b: string; bill_a: number; bill_b: number; delta: number; groups: Record<string, number>;
   lines: { driver: string; group: string; kwh: number | null; inr: number }[];
-  context: { cdh_A: number; cdh_B: number; tmax_A: number; tmax_B: number; rooms_A: number; rooms_B: number; event_guests_A: number; event_guests_B: number; md_A: number; md_B: number; pf_A: number; pf_B: number };
+  context: { cdh_A: number; cdh_B: number; tmax_A: number; tmax_B: number; tavg_A?: number; tavg_B?: number; rooms_A: number; rooms_B: number; event_guests_A: number; event_guests_B: number; md_A: number; md_B: number; pf_A: number; pf_B: number };
   waste_kwh_b: Record<string, number>;
 }
 export interface Risk { raw_peak: number; bias: number; peak: number; hour: number; upper: number; p_exceed: number | null; stack_increment: number; stack_peak: number; stack_basis: string; level: "OK" | "STACKING WATCH" | "WARNING" | "BREACH RISK"; why: string }

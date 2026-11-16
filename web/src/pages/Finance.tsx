@@ -233,14 +233,13 @@ function NightPanel({ night, notSized }: { night: NonNullable<Savings["night"]>;
 }
 
 export function OptionC({ sv }: { sv: Savings }) {
-  const [site, setSite] = useState<Site>("GGN");
+  const { hotel: site } = useHotel();                // the hotel picked at the top of the page
   const s = sv.option_c[site];
   const rows = s.monthly.map((m) => ({ ...m, month: m.month.slice(2).replace("-", "/") }));
   return (
     <>
-      <h2>How savings will be proven</h2>
+      <h2>How savings will be proven, {SITE_NAME[site]}</h2>
       <p className="lead" style={{ marginTop: -4 }}>A saving only counts if it holds up after allowing for the weather, guests and events. Each month we compare what the hotel actually used with what it would have used for those conditions. That is the international standard (IPMVP) that auditors accept. No changes have been made yet, so there are no savings to claim so far. This is the yardstick they will be measured with.</p>
-      <div style={{ margin: "12px 0" }}><SiteSwitch value={site} onChange={(x) => setSite(x as Site)} all={false} /></div>
       <div className="split">
         <div className="panel">
           <ResponsiveContainer width="100%" height={240}>

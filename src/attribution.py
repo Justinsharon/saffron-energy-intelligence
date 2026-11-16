@@ -135,6 +135,7 @@ def explain_frames(site: str, month_a: str, month_b: str, A: pd.DataFrame, B: pd
              "Tariff rates (new rates for the year)": "Tariff rates"}
     tab = pd.DataFrame([dict(driver=k, group=group[k], kwh=kwh.get(k, np.nan), inr=v) for k, v in lines.items()])
     ctx = dict(cdh_A=float(A.cdh.sum()), cdh_B=float(B.cdh.sum()), tmax_A=float(A.temp_c.max()), tmax_B=float(B.temp_c.max()),
+               tavg_A=float(A.temp_c.mean()), tavg_B=float(B.temp_c.mean()),
                rooms_A=float(A.groupby("date").rooms_sold.first().sum()), rooms_B=float(B.groupby("date").rooms_sold.first().sum()),
                event_guests_A=int(events_a.query("site == @site").pipe(lambda e: e[e.date.astype(str).str[:7] == month_a]).guests.sum()),
                event_guests_B=int(events_b.query("site == @site").pipe(lambda e: e[e.date.astype(str).str[:7] == month_b]).guests.sum()),

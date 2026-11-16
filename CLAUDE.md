@@ -82,6 +82,10 @@ Equipment · Ask; Today = the approved plan's steps with Done / Can't do, logged
 (Tomorrow's plan with today's followed / saved / missed strip), General manager (Overview: month so far vs adjusted baseline and last year, latest bill-change
 split, top problems, plan adherence), Finance controller (Savings, Bills = bill check). Other pages under "More". Bookings: save button at the bottom of the
 card ("Save bookings and plan"); changed plan steps are highlighted; approving with unsaved changes asks to save first.
+Layout (16 Nov): one hotel switch (black segmented, right of the title, one remembered hotel via `views.useHotel`) on Today, Tomorrow's plan, Overview,
+Savings, Monthly costs, Bills; duty Today is two columns (plan + problems | hotel cards + Equipment) above 1000 px. GM Overview plan adherence comes from
+`web/public/data/reports/adherence.json` (written by `tools/export_reports.py`: complete days with a saved plan, via the API's plan check), plus the days
+since checked in the browser. Waterfalls label only steps above 2 % of the bill. Bill-change context has `tavg_A/B` (src/attribution.py) for the weather line.
 Night base-load audit (16 Nov): `tools/night_baseload.py` → `data/night_baseload.md`. Each 00–05 h sub-meter channel vs its own good nights (10th–20th
 percentile of the 30 most similar nights by occupancy and temperature); claimed only if most nights are above it by more than the ±1 % meter accuracy AND the
 excess persists night to night (lag-1 r > 2/√n). Original year: no persistent excess at any hotel, so ₹0 is claimed (the looser rule alone would give

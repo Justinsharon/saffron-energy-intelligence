@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { Fragment, useEffect, useState } from "react";
 import { CartesianGrid, ComposedChart, Line, ReferenceArea, ResponsiveContainer, Tooltip, XAxis, YAxis, Bar, Cell, ReferenceLine, LabelList } from "recharts";
 import type { Alert } from "../data";
 import { fmtDT, hours, inr, n, parse } from "../format";
@@ -183,23 +183,32 @@ export function Ticket({ a, now, onAck, acked, defaultOpen = false }: { a: Alert
   );
 }
 
-/** Waterfall: from one value to another through signed drivers. */
+/** Waterfall: from one value to another through signed drivers. The axis spans the running totals (a little padding each side), so the first
+ *  and last bars are never cut at the top; only steps above 2 % of the starting bill carry a label, the smaller ones are listed underneath. */
 export function Waterfall({ start, end, startLabel, endLabel, steps, height = 300, stagger = false }:
   { start: number; end: number; startLabel: string; endLabel: string; steps: { label: string; value: number }[]; height?: number; stagger?: boolean }) {
   let run = start;
+  const totals = [start];
   const rows = [{ label: startLabel, base: 0, value: start, kind: "total" }];
   for (const s of steps) {
     const lo = Math.min(run, run + s.value);
     rows.push({ label: s.label, base: lo, value: Math.abs(s.value), kind: s.value >= 0 ? "up" : "down" });
     run += s.value;
+    totals.push(run);
   }
   rows.push({ label: endLabel, base: 0, value: end, kind: "total" });
-  const lo = Math.min(start, end, ...rows.map((r) => r.base).filter((b) => b > 0)) * 0.93;
-  const hi = Math.max(start, end, ...rows.map((r) => r.base + r.value)) * 1.02;
+  totals.push(end);
+  const tmin = Math.min(...totals), tmax = Math.max(...totals);
+  const pad = Math.max((tmax - tmin) * 0.12, Math.abs(start) * 0.01);
+  const lo = Math.max(0, tmin - pad), hi = tmax + pad;
+  const big = (r: typeof rows[number]) => r.kind === "total" || r.value >= Math.abs(start) * 0.02;
+  const small = rows.filter((r) => !big(r));
   const signed = (r: typeof rows[number]) => r.kind === "down" ? -r.value : r.value;
+  const fmt = (r: typeof rows[number]) => (r.kind === "up" ? "+" : "−") + inr(r.value);
   return (
+    <>
     <ResponsiveContainer width="100%" height={height + 30}>
-      <ComposedChart data={rows} margin={{ top: 22, right: 8, bottom: 4, left: 8 }}>
+      <ComposedChart data={rows} margin={{ top: 26, right: 8, bottom: 4, left: 8 }}>
         <CartesianGrid stroke="#efefef" vertical={false} />
         <XAxis dataKey="label" interval={0} angle={-35} textAnchor="end" tick={{ fontSize: 11.5, fill: "#5c5c5c" }} height={78} />
         <YAxis domain={[lo, hi]} tickFormatter={(v) => inr(v)} tick={{ fontSize: 11, fill: "#9b9b9b" }} width={70} allowDataOverflow />
@@ -209,16 +218,18 @@ export function Waterfall({ start, end, startLabel, endLabel, steps, height = 30
           {rows.map((r, i) => <Cell key={i} fill={r.kind === "total" ? "#151515" : r.kind === "up" ? "#c93a1c" : "#3f8a62"} />)}
           <LabelList dataKey="value" position="top" formatter={() => ""} content={(p: any) => {
             const r = rows[p.index ?? 0];
-            const txt = r.kind === "total" ? inr(r.value) : (r.kind === "up" ? "+" : "−") + inr(r.value);
-            if (r.kind !== "total" && rows.length > 8 && r.value < (hi - lo) * 0.02) return null;   // tiny steps: tooltip only, avoids label pile-ups
-            // stagger: alternate steps put their label inside the bar's bottom edge, so neighbours never overlap (compact / print)
-            const i = p.index ?? 0, low = stagger && r.kind !== "total" && i % 2 === 0;
-            const y = low ? (p.y ?? 0) + (p.height ?? 0) + 12 : (p.y ?? 0) - 6;
+            if (!big(r)) return null;                                     // small steps: listed under the chart, avoids label pile-ups
+            const txt = r.kind === "total" ? inr(r.value) : fmt(r);
+            // stagger: alternate labelled steps put their label inside the bar's bottom edge, so neighbours never overlap (compact / print)
+            const i = rows.filter(big).indexOf(r), low = stagger && r.kind !== "total" && i % 2 === 0;
+            const y = low ? (p.y ?? 0) + (p.height ?? 0) + 12 : Math.max((p.y ?? 0) - 6, 12);
             return <text x={(p.x ?? 0) + (p.width ?? 0) / 2} y={y} textAnchor="middle" fontSize={stagger ? 10 : 11} fill="#5c5c5c">{txt}</text>;
           }} />
         </Bar>
       </ComposedChart>
     </ResponsiveContainer>
+    {small.length > 0 && <p className="small muted wf-small">Smaller items (under 2% of the bill): {small.map((r, i) => <Fragment key={r.label}>{i ? " · " : ""}<span className="nw">{r.label} {fmt(r)}</span></Fragment>)}</p>}
+    </>
   );
 }
 

@@ -11,6 +11,7 @@ import { visibleAlerts } from "../feedcore";
 import type { Feed } from "../feedcore";
 import { fmtD, fmtDT, inr, n, parse, iso } from "../format";
 import { pickCell, useLiveDay, useWeather } from "../live";
+import { useHotel } from "../views";
 
 export function loadAcks(): Record<string, Ack> {
   try { return JSON.parse(localStorage.getItem("acks") || "{}"); } catch { return {}; }
@@ -31,7 +32,7 @@ export function SiteSwitch({ value, onChange, all = true }: { value: Site | "ALL
 function greeting(h: number) { return h < 4 ? "Hello" : h < 12 ? "Good morning" : h < 17 ? "Good afternoon" : "Good evening"; }
 
 /** Today so far for one hotel: used vs expected, and the last 24 hours as a sparkline. */
-function HotelCard({ s, feed, open, atStake, pressed, onClick, temp }: { s: Site; feed?: Feed; open: number; atStake: number; pressed: boolean; onClick: () => void; temp?: number | null }) {
+export function HotelCard({ s, feed, open, atStake, pressed, onClick, temp }: { s: Site; feed?: Feed; open: number; atStake: number; pressed: boolean; onClick: () => void; temp?: number | null }) {
   const hotels = useData<Record<Site, Hotel>>("hotels.json");
   const v = useMemo(() => {
     if (!feed) return null;
@@ -91,6 +92,7 @@ export default function Shift() {
   const wx = useWeather();
   const feeds = useFeeds(now, live);
   const [site, setSite] = useState<Site | "ALL">("ALL");
+  const { setHotel } = useHotel();
   const dc = useDayCheck(now, site === "ALL" ? "GGN" : site);
   // the feed's alerts, plus plan deviations of the hotel shown (Gurugram when all are shown) (a step of the day's plan not followed for 2+ hours), cut at the hour shown
   const alerts = useMemo(() => {
@@ -142,6 +144,7 @@ export default function Shift() {
           </p>
           {live && feeds && <span className="feed-note">Live feed (simulated meters) · updated {feeds.updated.slice(11, 16)}</span>}
         </div>
+        <SiteSwitch value={site} onChange={setSite} />
       </div>
 
       <div className="hotels">
@@ -155,7 +158,7 @@ export default function Shift() {
         </div>
       ))}
 
-      <TodayPlanCard now={now} dc={dc} onPlan={() => { if (site !== "ALL") try { localStorage.setItem("plan_site", site); } catch { /* private window */ } go("demand"); }} />
+      <TodayPlanCard now={now} dc={dc} onPlan={() => { if (site !== "ALL") setHotel(site); go("demand"); }} />
 
       <div className="section-title" id="attention">
         <h2>Needs attention{site !== "ALL" ? ` at ${SITE_NAME[site]}` : ""}</h2>
