@@ -24,8 +24,7 @@ export function TodayPlanCard({ now, dc, onPlan }: { now: string; dc: DayCheck |
     <p className="small muted" style={{ margin: "8px 0 0" }}>Suggested, not approved: would have saved {inr(chk.summary.would_have_saved_inr)} if followed. Not counted.</p>)
     : chk.summary.due > 0 && (
     <p className="small" style={{ margin: "8px 0 0" }}><strong>{chk.summary.followed} of {chk.summary.due} approved steps followed</strong>
-      {chk.summary.not_followed ? `, ${chk.summary.not_followed} not followed` : ""} · {inr(chk.summary.verified_inr)} saved / {inr(chk.summary.missed_inr)} missed so far
-      <span className="muted"> · {chk.honesty}</span></p>
+      {chk.summary.not_followed ? `, ${chk.summary.not_followed} not followed` : ""} · {inr(chk.summary.verified_inr)} saved / {inr(chk.summary.missed_inr)} missed so far</p>
   ));
   const notFollowed = due.filter((x) => x.status === "Not followed").slice(0, 2);
   const rows = (

@@ -447,7 +447,6 @@ function TomorrowPlan() {
               <ul>{res.notes.map((x, i) => <li key={i}>{x}</li>)}</ul>
             </div>
           )}
-          {past && chk && chk.summary.approved > 0 && <div className="guard note-warn" style={{ marginBottom: 10 }}><span aria-hidden>ⓘ</span><span>{chk.honesty} Only approved steps are checked and counted.</span></div>}
           {err && <div className="guard note-warn" style={{ marginBottom: 10 }}><span aria-hidden>⚠</span><span>{err}</span></div>}
           {saved?.plan && dirty && <p className="small" style={{ color: "var(--coral)", marginTop: 0 }}>The plan has changed since it was saved. Save the bookings and plan (above) before approving steps.</p>}
           <ol className="timeline">

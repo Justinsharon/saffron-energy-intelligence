@@ -35,7 +35,7 @@ export function MonthSavingsPanel({ now }: { now: string }) {
               <tr key={s}><td>{SITE_NAME[s]}</td><td className="r">{n(x.actual)} kWh</td><td className="r">{n(x.baseline)} kWh</td>
                 <td className="r">{x.kwh >= 0 ? "−" : "+"}{n(Math.abs(x.kwh))} kWh ({x.baseline ? Math.abs(x.kwh / x.baseline * 100).toFixed(1) : "0"}%)</td><td className="r">{inr(x.inr)}</td></tr>); })}</tbody>
           </table>
-          <p className="muted small" style={{ marginBottom: 0 }}>A rupee counts as a plan saving or an alert saving, never both. Plan savings are tracked here and in the monthly report, not added to the yearly savings figures below. Option C (the IPMVP whole-building check) is the total, however it is split; the gap between the split and the total is model noise and anything not yet tied to an action. {p?.honesty}</p>
+          <p className="muted small" style={{ marginBottom: 0 }}>A rupee counts as a plan saving or an alert saving, never both. Plan savings are tracked here and in the monthly report, not added to the yearly savings figures below. Option C (the IPMVP whole-building check) is the total, however it is split; the gap between the split and the total is model noise and anything not yet tied to an action.</p>
         </div>
       )}
     </>
