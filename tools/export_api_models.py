@@ -11,6 +11,7 @@ Jaipur and Goa (plan_models_<SITE>.joblib, context_<SITE>, refs_<SITE>, live_met
 tools/train_api_models.py.
 
 Run after any change to the models or the live year:   uv run python tools/export_api_models.py
+Only the matched-day refs (no refit):                   uv run python tools/export_api_models.py --refs-only
 """
 import json
 import sys
@@ -35,6 +36,28 @@ KEEP = sorted(set(GBM_FEATURES + forecast.LAGS + EV_COLS + ["timestamp", "hour",
                                                               "cdh_24h", "hdh"]))
 
 
+def write_refs(models: dict, ctx: pd.DataFrame, orig: pd.DataFrame, F: dict) -> dict:
+    """refs.json: last year's matched-day behaviour for every live-year date (the plan's ₹ baseline)."""
+    base = predict(models, ctx)
+    days = sorted(ctx.timestamp.dt.normalize().unique())
+    sub_o = pd.read_parquet(EP.CLEAN / "sub_ggn_hourly.parquet")
+    refs = {}
+    for d in days[1:-1]:                                            # first and last day are warm-up only
+        m = (ctx.timestamp.dt.normalize() == d).to_numpy()
+        refs[pd.Timestamp(d).strftime("%Y-%m-%d")] = EP.matched_refs(orig, sub_o, pd.Timestamp(d), float(np.mean(base["tr"][m])), F["curve"])
+    (OUT / "refs.json").write_text(json.dumps(refs, separators=(",", ":")), encoding="utf-8")
+    return refs
+
+
+def refs_only():
+    """Rebuild refs.json from the saved models and context (no refit; the models stay byte-for-byte as they are)."""
+    with EP.data(EP.CLEAN):
+        orig = EP.tr_frame()
+        F = recalibration.fit(recalibration._frame())
+    refs = write_refs(joblib.load(OUT / "plan_models.joblib"), pd.read_parquet(OUT / "context.parquet"), orig, F)
+    print(f"models/refs.json: {len(refs)} dates (models untouched)")
+
+
 def main():
     OUT.mkdir(exist_ok=True)
     with EP.data(EP.CLEAN):
@@ -56,14 +79,7 @@ def main():
     ctx = EP.with_events(live, [])                                  # last year's events cleared: the API adds the bookings it is given
     ctx[KEEP].to_parquet(OUT / "context.parquet", index=False)
 
-    base = predict(models, ctx)
-    days = sorted(ctx.timestamp.dt.normalize().unique())
-    sub_o = pd.read_parquet(EP.CLEAN / "sub_ggn_hourly.parquet")
-    refs = {}
-    for d in days[1:-1]:                                            # first and last day are warm-up only
-        m = (ctx.timestamp.dt.normalize() == d).to_numpy()
-        refs[pd.Timestamp(d).strftime("%Y-%m-%d")] = EP.matched_refs(orig, sub_o, pd.Timestamp(d), float(np.mean(base["tr"][m])))
-    (OUT / "refs.json").write_text(json.dumps(refs, separators=(",", ":")), encoding="utf-8")
+    refs = write_refs(models, ctx, orig, F)
 
     ev = pd.read_parquet(EP.CLEAN / "events.parquet").query("site == @EP.SITE")
     bills = pd.read_parquet(EP.CLEAN / "monthly_bills.parquet").query("site == @EP.SITE")
@@ -100,4 +116,4 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    refs_only() if "--refs-only" in sys.argv else main()

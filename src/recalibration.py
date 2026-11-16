@@ -1,8 +1,11 @@
 """Post-hoc fixes for the two chiller costs that came out low against the answer key (written 10 Nov, after the freeze; src/detector.py untouched).
 
-1. STAGING_KWTR (new Gurugram rule). The frozen staging rule needs the BMS `chillers_running` point to read 2. In ~900 hours it reads 1 while
-   the plant draws 0.9-1.1 kW/TR at 130-280 TR - double what one chiller needs at that load (0.6-0.7) and the signature of a second chiller
-   at part load. The point is a BMS status, and the command log is documented as thinned, so we trust the metered kW/TR.
+1. STAGING_KWTR (new Gurugram rule). In ~900 hours the plant draws 0.9-1.1 kW/TR at 130-280 TR while the BMS shows one chiller running -
+   about 1.6x what one chiller normally needs at that load (0.6-0.7). We first read this as a second chiller at part load that the BMS
+   run-status point missed. The per-chiller sub-meters (sub_ggn_hourly) disprove that: in every flagged hour chiller_ch3_kw = 0 and CH-1 alone
+   carries the load. Normal CH-1-alone hours at the same outdoor temperature run at ~1.0x, so weather explains little. The rule now flags
+   "CH-1 inefficient, cause unknown" (likely condenser side: cooling tower, fouling, water flow). Its ₹ is shown on the alert but NOT counted
+   as waste or savings until the cause is confirmed (src/savings.py NOT_SIZED).
    Defined on the tuning window only: the "normal one-chiller" kW/TR curve and the flag threshold are fitted on hours before 1 Apr 2026
    with the tuning labels removed. The same pattern exists in March (13-31 Mar), inside the tuning window, so the rule is not fitted to
    post-April labels - but the gap was found in held-out diagnostics, so results on it are POST-HOC, not clean held-out.
@@ -24,6 +27,8 @@ ONE_CHILLER_MAX_TR = 280          # guide: CH-1 alone up to 280 TR
 
 def _frame() -> pd.DataFrame:
     d = site_frame("GGN", with_resid=False)
+    sub = pd.read_parquet(CLEAN / "sub_ggn_hourly.parquet")[["timestamp", "chiller_ch1_kw", "chiller_ch3_kw"]]
+    d = d.drop(columns=[c for c in ("chiller_ch1_kw", "chiller_ch3_kw") if c in d]).merge(sub, on="timestamp", how="left")
     d["kwtr"] = d.chillers_kw / d.chiller_load_tr.where(d.chiller_load_tr > 20)
     d["band"] = pd.cut(d.chiller_load_tr, BANDS)
     return d
@@ -69,11 +74,25 @@ def _rate() -> float:
     return float((a.cost_inr / a.excess_kwh).median())                # same marginal ₹/kWh the detector used
 
 
-def staging_kwtr_alerts(d: pd.DataFrame, F: dict) -> pd.DataFrame:
+def flagged(d: pd.DataFrame, F: dict) -> tuple:
+    """(flag mask, expected one-chiller kW/TR now, expected at 7.0 °C) for the STAGING_KWTR rule."""
     exp = d.band.map(F["curve"]).astype(float)
     pen = d.band.map(F["chw_penalty"]).astype(float).fillna(0)
     exp_now = exp * np.where(d.chw_setpoint_c < CHW_STD, 1 + pen, 1.0)    # don't count the setpoint's own penalty twice
     flag = ((d.n_chillers == 1) & d.chiller_load_tr.between(BANDS[0], ONE_CHILLER_MAX_TR) & (d.kwtr > F["thr"] * exp_now) & ~d.fault).to_numpy()
+    return flag, exp_now, exp
+
+
+def ch1_summary(d: pd.DataFrame, F: dict) -> dict:
+    """The CH-1 inefficiency in numbers, for the card's cause text and the savings NOT_SIZED line (all from the meters)."""
+    flag, _, exp = flagged(d, F)
+    x = d[flag]
+    return dict(kwtr=float(x.kwtr.median()) if len(x) else float("nan"), normal_lo=float(F["curve"].min()), normal_hi=float(F["curve"].max()),
+                hours=int(flag.sum()), ch3_on_h=int((x.chiller_ch3_kw > 5).sum()))
+
+
+def staging_kwtr_alerts(d: pd.DataFrame, F: dict) -> pd.DataFrame:
+    flag, exp_now, exp = flagged(d, F)
     excess = (d.chillers_kw - exp_now * d.chiller_load_tr).clip(lower=0)
     rate = _rate()
     rows = []
@@ -81,11 +100,13 @@ def staging_kwtr_alerts(d: pd.DataFrame, F: dict) -> pd.DataFrame:
         seg = d.iloc[run]
         kwh = float(excess.iloc[run].sum())
         t0, t1 = seg.timestamp.iloc[0], seg.timestamp.iloc[-1] + pd.Timedelta(hours=1)
+        ch3 = float(seg.chiller_ch3_kw.max())
         rows.append(dict(site="GGN", rule="STAGING_KWTR", start=t0, end=t1, alert_time=seg.timestamp.iloc[1] + pd.Timedelta(hours=1),
                          flagged_h=len(run), excess_kwh=kwh, cost_inr=kwh * rate,
-                         evidence=(f"Chiller plant at {seg.kwtr.mean():.2f} kW/TR for {len(run)} h at {seg.chiller_load_tr.mean():.0f} TR; one chiller normally needs "
-                                   f"{exp.iloc[run].mean():.2f} at this load. The BMS shows one chiller running, but the draw matches two chillers at part load "
-                                   f"(CH-1 alone can carry up to 280 TR)")))
+                         evidence=(f"CH-1 at {seg.kwtr.mean():.2f} kW/TR for {len(run)} h at {seg.chiller_load_tr.mean():.0f} TR; it normally needs "
+                                   f"{exp.iloc[run].mean():.2f} at this load. "
+                                   + ("CH-3's sub-meter reads 0 kW throughout, so CH-1 is running alone (not a second chiller)" if ch3 <= 5
+                                      else f"CH-3's sub-meter reads up to {ch3:.0f} kW in these hours"))))
     return pd.DataFrame(rows)
 
 

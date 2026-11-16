@@ -9,12 +9,13 @@
 //                          however it is split. Meter-fault hours are excluded (T5).
 import { useEffect, useMemo, useState } from "react";
 import { SITES, useAlertsAt, useBillsAt, useHourlyAll, type Alert, type Hourly, type Recon, type Site } from "./data";
+import { NOT_CLAIMED } from "./copy";
 import { LIVE_START } from "./feedcore";
 import { monthSavings, type SavingsResult } from "./planApi";
 import type { PlanSite } from "./plan";
 import { loadMonthPlans } from "./planStore";
 
-const RULE_GROUP: Record<string, string> = { CHILLER_STAGING_LOW_LOAD: "chillers", STAGING_KWTR: "chillers", CHW_SETPOINT_LOW: "chw", AHU_HAND_MODE: "ahu",
+const RULE_GROUP: Record<string, string> = { CHILLER_STAGING_LOW_LOAD: "chillers", CHW_SETPOINT_LOW: "chw", AHU_HAND_MODE: "ahu",
   LAUNDRY_IN_PEAK: "laundry", EV_CHARGER_NIGHT_ON: "ev" };
 const ms = (t: string) => Date.parse(`${t.slice(0, 16)}:00Z`);
 
@@ -39,7 +40,7 @@ export function growthKwh(hr: Record<Site, Hourly | null>, month: string, asOf: 
 export function alertRupees(alerts: Alert[], month: string, covered: Record<string, Record<string, number[]>>) {
   let total = 0, overlap = 0, n = 0;
   for (const a of alerts) {
-    if (a.start.slice(0, 7) !== month || a.cost <= 0 || a.rule === "PLAN_DEVIATION") continue;
+    if (a.start.slice(0, 7) !== month || a.cost <= 0 || a.rule === "PLAN_DEVIATION" || NOT_CLAIMED.has(a.rule)) continue;
     n++;
     const g = a.site === "GGN" ? RULE_GROUP[a.rule] : undefined;
     let keep = a.cost;

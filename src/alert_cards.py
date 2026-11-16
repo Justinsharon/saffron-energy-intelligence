@@ -15,9 +15,9 @@ EXTRA_TYPES = {     # post-hoc rules (src/demand_ev_rules.py) and the residual l
                                  action="Hold laundry and heat-pump water heating, throttle EV charging (allowed above 920 kVA), stagger banquet AHU pre-cooling. Never shed chillers, kitchen, lifts or life-safety."),
     "EV_CHARGER_NIGHT_ON": dict(label="EV charger drawing power overnight", equipment="EV chargers", severity="Low", guardrail="recommend",
                                 action="Inspect the charger at the panel (likely a stuck session); clear the session or isolate the faulty port."),
-    "STAGING_KWTR": dict(label="Second chiller signature while the BMS shows one", equipment="chiller plant (CH-1 / CH-3)", severity="Medium",
-                         guardrail="auto-ok",
-                         action="Check CH-1 and CH-3 run status at the plant; if both run, stage down to CH-1 alone (it carries up to 280 TR). Also check why the BMS run-status point disagrees."),
+    "STAGING_KWTR": dict(label="Chiller 1 running inefficiently (cause to inspect)", equipment="chiller CH-1", severity="Medium",
+                         guardrail="recommend",
+                         action="Ask the chiller contractor to check the cooling tower and condenser (approach temperature, fouling, water flow)."),
     "RESIDUAL_UNEXPLAINED": dict(label="Site load above the weather/occupancy/event baseline", equipment="main meter", severity="Medium",
                                  guardrail="recommend", action="Walk the largest sub-metered loads for the period; no named waste type matches."),
 }
@@ -34,7 +34,6 @@ CAUSE = {
     "CHW_SETPOINT_LOW": "Setpoint lowered (often after a single comfort complaint) and never reset.",
     "DEMAND_NEAR_CONTRACT": "Shiftable loads (laundry, water heating, banquet AHUs) stacked on a hot afternoon peak.",
     "EV_CHARGER_NIGHT_ON": "Charger session stuck on.",
-    "STAGING_KWTR": "A second chiller running at part load that the BMS run-status point does not report (kW/TR doubles at the same load).",
     "RESIDUAL_UNEXPLAINED": "Not identified: the extra load is outside every named waste signature.",
 }
 # Columns plotted as evidence for each rule (from detector.site_frame); the main-meter actual vs baseline is always shown too.
@@ -43,10 +42,11 @@ CHART = {
     "LIGHTING_LEFT_ON": ["lighting_kw", "ev_guests"], "LAUNDRY_IN_PEAK": ["laundry_kw"], "POOL_PUMP_OFF_SCHEDULE": ["pool_pump_kw"],
     "POWER_FACTOR_DROP": ["pf"], "CHILLER_STAGING_LOW_LOAD": ["chillers_kw", "chiller_load_tr", "n_chillers"],
     "CHILLER_PART_LOAD_INEFFICIENCY": ["chillers_kw", "chiller_load_tr", "kw_per_tr"], "CHW_SETPOINT_LOW": ["chw_setpoint_c", "chillers_kw"],
-    "DEMAND_NEAR_CONTRACT": ["kva_max_in_hour"], "STAGING_KWTR": ["chillers_kw", "chiller_load_tr", "kw_per_tr"], "EV_CHARGER_NIGHT_ON": ["ev_chargers_kw"], "RESIDUAL_UNEXPLAINED": [],
+    "DEMAND_NEAR_CONTRACT": ["kva_max_in_hour"], "STAGING_KWTR": ["chiller_ch1_kw", "chiller_ch3_kw", "chiller_load_tr", "kw_per_tr"], "EV_CHARGER_NIGHT_ON": ["ev_chargers_kw"], "RESIDUAL_UNEXPLAINED": [],
 }
 ONE_OFF = {"LAUNDRY_IN_PEAK", "DEMAND_NEAR_CONTRACT"}        # a batch or a peak, not a condition that runs all day
 DIGEST = {"LAUNDRY_IN_PEAK", "EV_CHARGER_NIGHT_ON"}          # route to the daily digest, not the duty engineer's pager
+NOT_CLAIMED = {"STAGING_KWTR"}        # shown with its ₹, never counted as waste or savings until the cause is confirmed
 LOWER_BOUND = {"AHU_HAND_MODE"}       # CHW re-costed from metered penalty (recalibration.py)     # notebook 06: our ₹ is 0.4–0.8x the key's
 
 
@@ -79,12 +79,21 @@ def build_cards(recal: dict | None = None) -> pd.DataFrame:
     c["action"] = m.map(lambda v: v["action"])
     c["guardrail"] = m.map(lambda v: v["guardrail"])
     c["cause"] = c.rule.map(CAUSE)
+    k1 = RC.ch1_summary(fr, F)
+    c["ch1_kwtr"] = float("nan")
+    c.loc[c.rule == "STAGING_KWTR", "ch1_kwtr"] = k1["kwtr"]
+    c.loc[c.rule == "STAGING_KWTR", "cause"] = (
+        f"CH-1 alone draws about {k1['kwtr']:.2f} kW/TR where it normally needs {k1['normal_lo']:.2f}-{k1['normal_hi']:.2f} at this load. "
+        + ("Sub-meters show CH-3 off, so this is not a second chiller" if k1["ch3_on_h"] == 0
+           else f"Sub-meters show CH-3 on in only {k1['ch3_on_h']} of {k1['hours']} flagged hours, so this is mostly not a second chiller")
+        + "; weather explains little. Likely condenser side (cooling tower, fouling). Not counted as waste until the cause is confirmed.")
     c["duration_h"] = (c.end - c.start).dt.total_seconds() / 3600
     c["detect_lag_h"] = (c.alert_time - c.start).dt.total_seconds() / 3600
     c["cost_inr"] = c.cost_inr.fillna(0.0)
     c["cost_note"] = c.rule.map(lambda r: "lower-bound estimate" if r in LOWER_BOUND else "")
     c.loc[c.rule == "LAUNDRY_IN_PEAK", "cost_note"] = "peak surcharge only (energy is shifted, not saved)"
     c.loc[c.rule == "DEMAND_NEAR_CONTRACT", "cost_note"] = "excess-demand penalty if this peak stands as the month's MD"
+    c.loc[c.rule.isin(NOT_CLAIMED), "cost_note"] = "not counted as waste or savings until the cause is confirmed"
     c.loc[c.rule == "CHW_SETPOINT_LOW", "cost_note"] = "metered penalty at this load (6.5-10 % kW/TR for 5.5 vs 7.0 °C)"
     c["guard_text"] = c.guardrail.map({"never": "Recommendation only. Never switched off automatically (safety / kitchen-hours item).",
                                        "auto-ok": "Recommendation only. A person approves; the guide would allow automation within limits.",

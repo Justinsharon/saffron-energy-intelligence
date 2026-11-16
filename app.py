@@ -439,8 +439,8 @@ def page_savings():
                "Lines marked 'Low' confidence rest on a stated assumption, not a measurement.")
     st.dataframe(p[["hotel", "category", "measure", "inr", "pct_of_site_bill", "basis", "safety", "confidence"]].style.format({"inr": "₹{:,.0f}", "pct_of_site_bill": "{:.1f}%"}),
                  hide_index=True, width="stretch")
-    from savings import NOT_SIZED
-    st.markdown("**Not sized (and why):**\n" + "\n".join(f"- {x}" for x in NOT_SIZED))
+    from savings import not_sized
+    st.markdown("**Not sized (and why):**\n" + "\n".join(f"- {x}" for x in not_sized()))
 
     st.subheader("Verification — IPMVP Option C")
     st.markdown("Savings are only claimed as **adjusted baseline − actual**: the baseline model (weather, occupancy, events, day type) is driven by the "

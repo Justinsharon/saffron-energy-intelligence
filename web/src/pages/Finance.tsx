@@ -179,6 +179,7 @@ function SavingsBlock({ sv }: { sv: Savings }) {
               <td>{CATEGORY[m.category] ?? m.category}</td><td className="r">{inr(m.inr)}</td><td className="small">{CONFIDENCE(m.confidence)}</td><td className="small">{m.safety}</td></tr>
           ))}</tbody>
         </table>
+        {sv.not_sized.filter((x) => x.startsWith("CH-1")).map((x) => <p key={x} className="small" style={{ marginBottom: 0 }}><strong>Not counted:</strong> {x}</p>)}
       </div>
     </>
   );
