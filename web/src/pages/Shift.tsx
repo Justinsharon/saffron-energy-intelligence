@@ -90,8 +90,9 @@ export default function Shift() {
   const shown = now;
   const wx = useWeather();
   const feeds = useFeeds(now, live);
-  const dc = useDayCheck(now);
-  // the feed's alerts, plus Gurugram plan deviations (a step of the day's plan not followed for 2+ hours), cut at the hour shown
+  const [site, setSite] = useState<Site | "ALL">("ALL");
+  const dc = useDayCheck(now, site === "ALL" ? "GGN" : site);
+  // the feed's alerts, plus plan deviations of the hotel shown (Gurugram when all are shown) (a step of the day's plan not followed for 2+ hours), cut at the hour shown
   const alerts = useMemo(() => {
     if (!feeds) return null;
     const dayAgo = iso(new Date(parse(now).getTime() - 864e5));
@@ -99,7 +100,6 @@ export default function Shift() {
     return [...SITES.flatMap((s) => feeds.feeds[s].recent_alerts), ...dev];
   }, [feeds, dc, now]);
   const days = useData<Record<string, ForecastDay>>("forecast_days.json");
-  const [site, setSite] = useState<Site | "ALL">("ALL");
   const [acks, setAcks] = useState<Record<string, Ack>>(loadAcks);
   const [showDigest, setShowDigest] = useState(false);
   useEffect(() => saveAcks(acks), [acks]);
@@ -155,7 +155,7 @@ export default function Shift() {
         </div>
       ))}
 
-      {(site === "ALL" || site === "GGN") && <TodayPlanCard now={now} dc={dc} onPlan={() => go("demand")} />}
+      <TodayPlanCard now={now} dc={dc} onPlan={() => { if (site !== "ALL") try { localStorage.setItem("plan_site", site); } catch { /* private window */ } go("demand"); }} />
 
       <div className="section-title" id="attention">
         <h2>Needs attention{site !== "ALL" ? ` at ${SITE_NAME[site]}` : ""}</h2>

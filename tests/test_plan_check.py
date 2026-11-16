@@ -114,7 +114,7 @@ def test_only_approved_followed_steps_are_covered():
 def c():
     from fastapi.testclient import TestClient
     import api.main as A
-    A._open_meteo = lambda date, notes: None
+    A._open_meteo = lambda date, notes, site="GGN": None
     return TestClient(A.app), A
 
 

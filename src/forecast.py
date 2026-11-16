@@ -23,10 +23,10 @@ LAGS = ["lag24", "lag168", "prev_day_max", "prev_day_mean"]
 FLEX = {"laundry_kw": "Laundry", "ev_chargers_kw": "EV chargers", "water_heating_kw": "Water heating", "ahu_banquet_kw": "Banquet AHUs"}
 
 
-def thermal_features(d: pd.DataFrame) -> pd.DataFrame:
+def thermal_features(d: pd.DataFrame, site: str = SITE) -> pd.DataFrame:
     """Recompute the temperature-derived columns from temp_c (same formulas as baseline.build_features)."""
     d = d.copy()
-    d["cdh"] = (d.temp_c - CDH_BASE[SITE]).clip(lower=0)
+    d["cdh"] = (d.temp_c - CDH_BASE[site]).clip(lower=0)
     d["temp_3h"] = d.temp_c.rolling(3, min_periods=1).mean()
     d["cdh_24h"] = d.cdh.rolling(24, min_periods=1).mean()
     d["hdh"] = (18.0 - d.temp_c).clip(lower=0)

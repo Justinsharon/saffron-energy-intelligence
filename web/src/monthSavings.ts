@@ -1,5 +1,6 @@
 // Savings for one month, split so nothing is counted twice (used by Bills & savings and the monthly report, so they always agree):
-//   from the daily plan  - verified ₹ of approved, followed steps of saved plans (POST /api/savings). An operational measure: shown here,
+//   from the daily plan  - verified ₹ of approved, followed steps of saved plans, all three hotels (POST /api/savings per hotel, summed;
+//                          Jaipur / Goa never count their CHW setpoint step: no setpoint meter). An operational measure: shown here,
 //                          on the plan pages and in the monthly report, never added to the yearly savings headline (src/savings.py);
 //   from acting on alerts - ₹ of waste the alerts caught in the month, in full (as the headline counts it). For Gurugram, `overlap_inr` is
 //                          the part in hours an approved, followed plan step also covered (same equipment): display only, and taken off
@@ -10,6 +11,7 @@ import { useEffect, useMemo, useState } from "react";
 import { SITES, useAlertsAt, useBillsAt, useHourlyAll, type Alert, type Hourly, type Recon, type Site } from "./data";
 import { LIVE_START } from "./feedcore";
 import { monthSavings, type SavingsResult } from "./planApi";
+import type { PlanSite } from "./plan";
 import { loadMonthPlans } from "./planStore";
 
 const RULE_GROUP: Record<string, string> = { CHILLER_STAGING_LOW_LOAD: "chillers", STAGING_KWTR: "chillers", CHW_SETPOINT_LOW: "chw", AHU_HAND_MODE: "ahu",
@@ -56,6 +58,19 @@ export function alertRupees(alerts: Alert[], month: string, covered: Record<stri
   return { inr: total, overlap_inr: overlap, alerts: n };
 }
 
+const PLAN_SITES: PlanSite[] = ["GGN", "JAI", "GOA"];
+
+/** The three hotels' plan savings as one result: days of every hotel (each with its site), totals summed, and the per-hotel results. */
+export function combineSavings(rs: (SavingsResult | null)[]): (SavingsResult & { bySite: Partial<Record<PlanSite, SavingsResult>> }) | null {
+  const ok = rs.map((r, i) => [PLAN_SITES[i], r] as const).filter((x): x is readonly [PlanSite, SavingsResult] => !!x[1]);
+  if (!ok.length) return null;
+  const first = ok[0][1];
+  const keys = ["planned_inr", "verified_inr", "missed_inr", "days", "saved_days", "would_have_saved_inr", "approved_steps"] as const;
+  const totals = Object.fromEntries(keys.map((k) => [k, ok.reduce((x, [, r]) => x + (r.totals[k] ?? 0), 0)])) as SavingsResult["totals"];
+  totals.days = Math.max(...ok.map(([, r]) => r.totals.days));
+  return { ...first, totals, days: ok.flatMap(([s, r]) => r.days.map((d) => ({ ...d, site: s }))), bySite: Object.fromEntries(ok) };
+}
+
 export interface MonthSavings {
   month: string; asOf: string;
   plan: SavingsResult | null | undefined;                 // undefined = loading, null = service unavailable or no live days
@@ -80,10 +95,13 @@ export function useMonthSavings(month: string, asOf: string): MonthSavings {
     let on = true;
     setPlan(undefined);
     if (!live || `${month}-02` > asOf.slice(0, 10)) { setPlan(null); return; }
-    loadMonthPlans(month).then((saved) => monthSavings(month, `${asOf.slice(0, 13)}:00`, saved)).then((r) => on && setPlan(r));
+    const at = `${asOf.slice(0, 13)}:00`;
+    Promise.all(PLAN_SITES.map((s) => loadMonthPlans(month, s).then((saved) => monthSavings(month, at, saved, s)).catch(() => null)))
+      .then((rs) => on && setPlan(combineSavings(rs)));
     return () => { on = false; };
   }, [month, asOf.slice(0, 13), live]);
-  const covered = useMemo(() => Object.fromEntries((plan?.days ?? []).map((d) => [d.date, d.covered])), [plan]);
+  // hours a followed plan step covers, for taking Gurugram alert ₹ off once (alert rules map to Gurugram equipment only)
+  const covered = useMemo(() => Object.fromEntries((plan?.days ?? []).filter((d) => (d.site ?? "GGN") === "GGN").map((d) => [d.date, d.covered])), [plan]);
   const al = useMemo(() => (alerts && plan !== undefined ? alertRupees(alerts, month, covered) : null), [alerts, covered, month, plan]);
   const optionC = useMemo(() => {
     if (!bills || SITES.some((s) => !hr[s])) return null;

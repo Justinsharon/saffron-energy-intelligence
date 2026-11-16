@@ -20,7 +20,7 @@ TOMORROW = (TODAY + timedelta(days=1)).isoformat()
 
 @pytest.fixture(scope="module")
 def c():
-    A._open_meteo = lambda date, notes: [18.0 + 8 * (h > 9 and h < 18) for h in range(24)]     # fixed forecast, no network
+    A._open_meteo = lambda date, notes, site="GGN": [18.0 + 8 * (h > 9 and h < 18) for h in range(24)]     # fixed forecast, no network
     return TestClient(A.app)
 
 
@@ -55,10 +55,10 @@ def test_alias_conflict_is_noted(c):
     assert r.status_code == 200 and "both 'rooms' and an alias" in joined(j)
 
 
-@pytest.mark.parametrize("site", ["JAI", "Jaipur", "goa"])
-def test_other_sites_422(c, site):
-    r, j = post(c, {"site": site})
-    assert r.status_code == 422 and "Jaipur and Goa are coming next" in j["error"]
+@pytest.mark.parametrize("site,code", [("JAI", "JAI"), ("Jaipur", "JAI"), ("goa", "GOA")])
+def test_other_sites_planned(c, site, code):
+    r, j = post(c, {"site": site, "date": TOMORROW})
+    assert r.status_code == 200 and j["site"] == code and j["actions"]
 
 
 def test_unknown_site_422_and_gurugram_names_ok(c):

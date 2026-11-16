@@ -7,6 +7,9 @@
   meta.json           tariff, PF, one-chiller kW/TR curve, AHU run-on, peak-risk calibration, cooling-model accuracy, and the input
                       ranges seen in training (the API notes inputs outside them instead of failing)
 
+Jaipur and Goa (plan_models_<SITE>.joblib, context_<SITE>, refs_<SITE>, live_meters_<SITE>, meta.json["sites"]) are written at the end by
+tools/train_api_models.py.
+
 Run after any change to the models or the live year:   uv run python tools/export_api_models.py
 """
 import json
@@ -92,6 +95,8 @@ def main():
     sub[cols].merge(hm, on="timestamp", how="left").to_parquet(OUT / "live_meters.parquet", index=False)
     size = sum(f.stat().st_size for f in OUT.iterdir()) / 2 ** 20
     print(f"models/: {', '.join(f.name for f in sorted(OUT.iterdir()))} ({size:.1f} MB); {len(refs)} dates; cooling model {acc['hourly_cv_rmse_pct']} % CV(RMSE)")
+    import train_api_models                                         # Jaipur and Goa (meta.json was just rewritten, so add them back)
+    train_api_models.main()
 
 
 if __name__ == "__main__":

@@ -47,6 +47,11 @@ Full brief, acceptance tests (T1–T10), metrics, schemas, findings and progress
 - `api/main.py` (FastAPI): `GET /health`; `POST /plan` {date, rooms, guests, covers, tmax | temps[24], bookings[{hall A/B/A+B, start, end, guests}]}
   returns hourly forecast (kW, peak kVA, cooling TR), peak risk, the operating plan (`src/operating_plan.py`) and plain-English `notes`.
   Odd inputs are clamped/flagged in `notes`, never an error; only a date outside the live year returns 422. Recommend only.
+- Jaipur / Goa (16 Nov): `site` JAI / GOA on `/plan`, `/forecast`, `/risk`, `/check`, `/savings`. Venues validated per hotel (aliases like "lawns",
+  "ballroom"; unknown venues skipped with a note). Plan uses only levers their sub-meters can check (`operating_plan.plan_site`): staging (checked by
+  total kW/TR), CHW 7.0/8.0 °C (shown, never counted: no setpoint meter), event lighting ±30 min, Goa pool filtration (≥ 8 h), laundry, demand watch
+  (step only within 8 % of 700 / 600 kVA). Models: `uv run python tools/train_api_models.py` (hourly CV(RMSE) JAI kW 5.0 / TR 4.5 / kVA 5.3 %,
+  GOA 5.4 / 5.4 / 4.9 %); also run at the end of `export_api_models.py`. The web plans Jaipur / Goa through the API only (no offline estimate).
 - Models in `models/` are trained on **Oct 2025 – Sep 2026 only** and never refitted at run time; rebuild with
   `uv run python tools/export_api_models.py` (also writes the live-year context, matched-day refs and meta). The image reads no `data/`.
 - Redeploy from the repo root (Dockerfile at root; `.gcloudignore` uploads only Dockerfile, `api/`, `src/`, `models/`):
