@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { CartesianGrid, ComposedChart, Line, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { useClock } from "../App";
 import { Gauge, KVA } from "../components/parts";
@@ -11,6 +11,27 @@ import { actionId, hh, TAG, type Booking, type PlanDay, type PlanSite, type Risk
 import { apiPlan, checkPlan, getPlan, type CheckResult, type CheckStep, type PlanResult } from "../planApi";
 import { checkActions, type PlanView, type SavedAction } from "../planlog";
 import { loadPlan, plannerName, postPlan, setPlannerName } from "../planStore";
+import { useDayCheck } from "../dayCheck";
+
+// plain names for the "what changed" notes when bookings change the plan
+const PLAIN: Record<string, string> = { chillers: "Chillers", chw: "Chilled water", ahu: "Banquet cooling", laundry: "Laundry", water: "Water heating", ev: "EV charging",
+  lighting: "Event lighting", pool: "Pool filtration", demand: "Demand watch" };
+const span = (a: { start: string; end: string }) => `${a.start.replace(" (next day)", "")}–${a.end === "00:00 (next day)" ? "midnight" : a.end.replace(" (next day)", "⁺¹")}`;
+const stepKey = (a: SavedAction) => `${a.group}|${a.equipment}`;
+
+/** Chief engineer's strip: how today's approved plan is going (approved steps only, checked against the meters). */
+function TodayStrip({ site, now }: { site: PlanSite; now: string }) {
+  const dc = useDayCheck(now, site);
+  if (now.slice(0, 10) < "2026-10-02") return null;
+  const s = dc?.check?.summary;
+  return (
+    <div className="today-strip small" role="status">
+      <strong>Today, {SITE_NAME[site]}:</strong>{" "}
+      {dc === undefined ? "checking…" : !s ? "the plan check did not answer." : s.approved === 0 ? "no approved plan."
+        : <>{s.followed} of {s.due} steps followed · <span style={{ color: "var(--green)" }}>{inr(s.verified_inr)} saved</span> / <span style={{ color: "var(--coral)" }}>{inr(s.missed_inr)} missed</span>{s.due < s.approved ? ` · ${s.approved - s.due} not due yet` : ""}</>}
+    </div>
+  );
+}
 
 const HEAD: Record<string, string> = {
   "BREACH RISK": "Risk of going over the power limit", WARNING: "Close to the power limit", "STACKING WATCH": "Watch the afternoon", OK: "Comfortably under the limit",
@@ -150,8 +171,8 @@ function CheckLine({ c }: { c: CheckStep }) {
   );
 }
 
-function Step({ a, edit, decision, canDecide, busy, onDecide, chk }: {
-  a: SavedAction; edit?: PlanView["edits"][string]; decision?: PlanView["decisions"][string]; canDecide: boolean; busy: boolean; chk?: CheckStep;
+function Step({ a, edit, decision, canDecide, busy, onDecide, chk, changed }: {
+  a: SavedAction; edit?: PlanView["edits"][string]; decision?: PlanView["decisions"][string]; canDecide: boolean; busy: boolean; chk?: CheckStep; changed?: string;
   onDecide: (ev: "approve" | "skip" | "edit", extra?: Record<string, string>) => void;
 }) {
   const [mode, setMode] = useState<"" | "skip" | "edit">("");
@@ -163,11 +184,12 @@ function Step({ a, edit, decision, canDecide, busy, onDecide, chk }: {
   const minStart = a.group === "ahu" && a.start_h != null ? Math.max(0, a.start_h - 2) : 0;
   const t = (x: string) => x.replace(" (next day)", "⁺¹");
   return (
-    <li className={`step ${state}`}>
+    <li className={`step ${state}${changed ? " changed" : ""}`}>
       <div className="stime"><b>{t(start)}</b><span>to {t(end)}</span>{edit && <em>edited</em>}</div>
       <div className="body">
         <div className="row1"><span className="tag">{TAG[a.group]}</span><strong>{edit && (a.group === "ahu" || a.group === "lighting") ? `On at ${start}, off at ${end}` : a.setting}</strong><span className="money">{a.saving_inr >= 1 ? `${inr(a.saving_inr)} vs last year` : a.counted === false ? "not verifiable, not counted" : a.group === "demand" ? "watch only, no ₹ claimed" : "no saving, keeps it safe"}</span></div>
         <div className="small muted">{a.equipment}</div>
+        {changed && <div className="small changed-note">{changed}</div>}
         <p className="why">{a.reason}</p>
         {edit && <p className="small" style={{ margin: "0 0 8px", color: "var(--coral)" }}>Time changed from {a.start}–{a.end} to {start}–{end} by {edit.by} at {edit.at.slice(11)}{edit.reason ? `: ${edit.reason}` : ""}.</p>}
         <div className="guard small"><span aria-hidden>🛡</span><span>{a.guardrail}</span></div>
@@ -245,7 +267,9 @@ function TomorrowPlan() {
       if (!on) return;
       setSaved(v);
       const i = v.plan?.inputs;
-      setForm(i ? { rooms: i.rooms, guests: i.guests, covers: i.covers, bookings: i.bookings, notes: i.notes, touched: { rooms: true, guests: true, covers: true } }
+      // a saved plan's inputs fill the form; any field it lacks (e.g. a plan saved through the storage function directly) takes the suggested value
+      setForm(i ? { rooms: i.rooms ?? base.rooms, guests: i.guests ?? base.guests, covers: i.covers ?? base.covers, bookings: Array.isArray(i.bookings) ? i.bookings : [],
+                    notes: i.notes ?? "", touched: { rooms: i.rooms != null, guests: i.guests != null, covers: i.covers != null } }
                 : { rooms: base.rooms, guests: base.guests, covers: base.covers, bookings: [], notes: "", touched: {} });
     });
     return () => { on = false; };
@@ -271,6 +295,28 @@ function TomorrowPlan() {
   }, [reqKey, baseKey, temps, idx]);
   useEffect(() => setRes(null), [date, site]);
   const actions: SavedAction[] = useMemo(() => (res ? res.actions.map((a) => ({ ...a, id: actionId(a) })) : []), [res]);
+  // steps that changed since the last plan for the same day (bookings or numbers changed): highlighted for a few seconds
+  const prev = useRef<{ key: string; acts: SavedAction[] } | null>(null);
+  const [changed, setChanged] = useState<Record<string, string>>({});
+  useEffect(() => {
+    if (!res) return;
+    const key = `${site}|${date}`;
+    const p = prev.current;
+    prev.current = { key, acts: actions };
+    if (!p || p.key !== key) return;
+    const old = Object.fromEntries(p.acts.map((a) => [stepKey(a), a]));
+    const out: Record<string, string> = {};
+    for (const a of actions) {
+      const o = old[stepKey(a)];
+      if (!o) out[a.id] = `New: ${PLAIN[a.group] ?? a.group} ${span(a)}`;
+      else if (o.start !== a.start || o.end !== a.end) out[a.id] = `${PLAIN[a.group] ?? a.group} now ${span(a)} (was ${span(o)})`;
+      else if (o.setting !== a.setting) out[a.id] = `${PLAIN[a.group] ?? a.group} now: ${a.setting}`;
+    }
+    setChanged(out);
+    if (!Object.keys(out).length) return;
+    const t = setTimeout(() => setChanged({}), 6000);
+    return () => clearTimeout(t);
+  }, [res]);
   const risk = res?.risk ?? null;
 
   // plan vs actual: today or a past day - the saved plan (edited times, decisions) or, if none was saved, the suggested plan shown
@@ -287,7 +333,12 @@ function TomorrowPlan() {
   }, [past, site, date, savedSig, saved?.plan ? "" : shownSig, asOf.slice(0, 13)]);
   const chkBy = useMemo(() => Object.fromEntries((chk?.steps ?? []).map((x) => [x.id, x])), [chk]);
   const sig = (xs: { id: string; setting: string; end: string }[]) => xs.map((a) => `${a.id}=${a.setting}@${a.end}`).join(";");
-  const dirty = !saved?.plan || sig(saved.plan.actions) !== sig(actions);
+  const inputsSig = (i: Partial<{ rooms: number; guests: number; covers: number; bookings: Booking[]; notes: string }>) => JSON.stringify([i.rooms, i.guests, i.covers, i.bookings ?? [], i.notes ?? ""]);
+  const dirty = !saved?.plan || sig(saved.plan.actions) !== sig(actions) || (!!form && inputsSig(saved.plan.inputs) !== inputsSig(form));
+  const [justSaved, setJustSaved] = useState(false);
+  const nameRef = useRef<HTMLInputElement>(null);
+  useEffect(() => setJustSaved(false), [date, site]);
+  const save = async () => { setPlannerName(name); await submit(); setJustSaved(true); };
   const approved = actions.filter((a) => saved?.decisions[a.id]?.event === "approve").length;
   const set = (k: keyof Form, v: unknown) => form && setForm({ ...form, [k]: v, touched: { ...form.touched, [k]: true } });
 
@@ -302,7 +353,10 @@ function TomorrowPlan() {
   async function decide(a: SavedAction, ev: "approve" | "skip" | "edit", extra: Record<string, string> = {}) {
     if (!name.trim()) { setErr("Enter your name first: every decision is logged with who made it."); return; }
     setPlannerName(name);
-    if (dirty) await submit();
+    if (dirty) {                                     // a decision belongs to a saved plan: ask before saving the unsaved changes
+      if (!window.confirm("You have unsaved changes. Save the bookings and plan first, then " + (ev === "approve" ? "approve" : ev === "skip" ? "skip" : "change") + " this step?")) return;
+      await submit();
+    }
     await send({ event: ev, action_id: a.id, ...extra });
   }
 
@@ -317,6 +371,7 @@ function TomorrowPlan() {
           </div>
           <p className="lead">{past ? "Each step of the day's plan, checked against the meters up to " + (live ? "now" : "the hour you are looking back at") + ". Followed steps count as verified savings; steps not followed show what they cost."
             : "Enter tomorrow's bookings. The forecast and the operating plan update as you type. Each step is a recommendation: approve it, skip it with a reason, or change its time. Nothing is switched automatically, and every decision is logged."}</p>
+          {(live || past) && <TodayStrip site={site} now={live ? istNow() : clockNow} />}
           {g && g.peak_kva != null && <span className="feed-note">Today so far: peak {n(g.peak_kva)} kVA at {String(g.peak_hour).padStart(2, "0")}:00 (live feed, simulated meters)</span>}
         </div>
         <label className="field" style={{ minWidth: 200 }}>
@@ -345,15 +400,26 @@ function TomorrowPlan() {
               <span className="small muted">Notes for the duty team</span>
               <textarea rows={2} value={form.notes} onChange={(e) => set("notes", e.target.value)} placeholder="e.g. VIP arrival 15:00, laundry short-staffed" />
             </label>
-            <p className="small muted" style={{ marginBottom: 0 }}>Weather: {res ? `${res.weather || "typical temperatures for this date"}, top ${Math.round(Math.max(...res.forecast.temp))} °C` : "checking…"}. Rooms and covers are suggested from the usual pattern for this time of year.</p>
+            <p className="small muted">Weather: {res ? `${res.weather || "typical temperatures for this date"}, top ${Math.round(Math.max(...res.forecast.temp))} °C` : "checking…"}. Rooms and covers are suggested from the usual pattern for this time of year.</p>
+            <div className="save-row">
+              <input ref={nameRef} className="name" value={name} onChange={(e) => setName(e.target.value)} onBlur={() => name.trim() && setPlannerName(name)} placeholder="Your name" aria-label="Your name" />
+              {dirty || !saved?.plan ? (
+                <button className="btn accent" disabled={busy || !res || planning} onClick={() => (name.trim() ? save() : nameRef.current?.focus())}>Save bookings and plan</button>
+              ) : (
+                <span className="saved-note">Saved {saved.plan.at.slice(11)} by {saved.plan.by}{saved.storage === "device" ? " (this device only)" : ""}</span>
+              )}
+              {justSaved && !dirty && <a href="#plan" className="small" onClick={(e) => { e.preventDefault(); document.getElementById("plan")?.scrollIntoView({ behavior: "smooth" }); }}>See the updated plan ↓</a>}
+            </div>
+            <p className="small save-status" aria-live="polite">{planning ? "Updating forecast…" : dirty ? "Forecast and plan updated for your changes; not saved yet." : ""}
+              {!name.trim() && dirty ? " Enter your name to save." : ""}</p>
           </section>
 
           {!res ? <p className="muted" style={{ marginTop: 18 }}>{planErr && !planning ? `The plan could not be worked out: ${planErr}` : "Working out the plan…"}</p> : (<>
 
-          <h2>Forecast</h2>
+          <h2>Forecast {planning && <span className="small muted" style={{ fontWeight: 500, marginLeft: 8 }}>Updating forecast…</span>}</h2>
           <ForecastCharts kw={res.forecast.kw} kva={res.forecast.kva} tr={res.forecast.tr} site={site} />
 
-          <div className="section-title plan-head">
+          <div className="section-title plan-head" id="plan">
             <div>
               <h2 style={{ margin: 0 }}>Operating plan {res.source === "offline" && <span className="chip c-med" style={{ verticalAlign: "middle" }}>offline estimate</span>}
                 {planning && <span className="small muted" style={{ fontWeight: 500, marginLeft: 8 }}>updating…</span>}</h2>
@@ -364,10 +430,6 @@ function TomorrowPlan() {
                 {chk.summary.not_followed ? `, ${chk.summary.not_followed} not followed` : ""} · <strong style={{ color: "var(--green)" }}>{inr(chk.summary.verified_inr)} saved</strong> / <strong style={{ color: "var(--coral)" }}>{inr(chk.summary.missed_inr)} missed</strong> so far (to {chk.as_of.slice(11, 16)}{chk.as_of.slice(0, 10) !== date ? ` on ${chk.as_of.slice(8, 10)}/${chk.as_of.slice(5, 7)}` : ""})</p>}
               {past && chk === null && <p className="small muted" style={{ margin: "4px 0 0" }}>The plan check needs the planning service, which did not answer. Try again in a minute.</p>}
             </div>
-            <div className="btn-row" style={{ alignItems: "center" }}>
-              <input className="name" value={name} onChange={(e) => setName(e.target.value)} onBlur={() => name.trim() && setPlannerName(name)} placeholder="Your name" aria-label="Your name" />
-              <button className="btn accent" disabled={busy || !name.trim() || !dirty} onClick={() => { setPlannerName(name); submit(); }}>{saved?.plan ? (dirty ? "Save the updated plan" : "Plan saved") : "Save plan"}</button>
-            </div>
           </div>
           {res.notes.length > 0 && (
             <div className="read-notes">
@@ -377,14 +439,14 @@ function TomorrowPlan() {
           )}
           {past && chk && chk.summary.approved > 0 && <div className="guard note-warn" style={{ marginBottom: 10 }}><span aria-hidden>ⓘ</span><span>{chk.honesty} Only approved steps are checked and counted.</span></div>}
           {err && <div className="guard note-warn" style={{ marginBottom: 10 }}><span aria-hidden>⚠</span><span>{err}</span></div>}
-          {saved?.plan && dirty && <p className="small" style={{ color: "var(--coral)", marginTop: 0 }}>The plan has changed since it was saved. Approving a step saves the new version first.</p>}
+          {saved?.plan && dirty && <p className="small" style={{ color: "var(--coral)", marginTop: 0 }}>The plan has changed since it was saved. Save the bookings and plan (above) before approving steps.</p>}
           <ol className="timeline">
             {actions.map((a) => (
               <Step key={a.id + (saved?.plan?.n ?? 0)} a={a} edit={saved?.edits[a.id]} decision={dirty ? undefined : saved?.decisions[a.id]} canDecide={!!name.trim()} busy={busy}
-                    onDecide={(ev, x) => decide(a, ev, x)} chk={past ? chkBy[a.id] : undefined} />
+                    onDecide={(ev, x) => decide(a, ev, x)} chk={past ? chkBy[a.id] : undefined} changed={changed[a.id]} />
             ))}
           </ol>
-          {!name.trim() && <p className="small muted">Enter your name above to approve, skip or change steps. It is kept on this device.</p>}
+          {!name.trim() && <p className="small muted">Enter your name in the bookings card to save, approve, skip or change steps. It is kept on this device.</p>}
           <p className="small muted">Savings compare this plan with how the hotel ran on matched days last year (same month, same kind of day, similar cooling load), at today's tariff. Plan savings are counted separately from the waste alerts.
             {site !== "GGN" && ` ${SITE_NAME[site]} has no chilled-water setpoint meter or per-chiller meters: the setpoint step is shown but never counted${res.not_counted_inr ? ` (about ${inr(res.not_counted_inr)} by the guide's rule)` : ""}, and staging is checked by total kW per TR.`}
             {res.cv_rmse_pct && ` Model accuracy (hourly CV(RMSE), leave-one-month-out on the original year): kW ${res.cv_rmse_pct.kw} %, cooling ${res.cv_rmse_pct.tr} %, peak kVA ${res.cv_rmse_pct.kva} %.`}</p>

@@ -8,7 +8,13 @@ import Ask from "./pages/Ask";
 import Rate from "./pages/Rate";
 import Method from "./pages/Method";
 import Report from "./pages/Report";
+import { Attention, DutyToday } from "./pages/Duty";
+import Overview from "./pages/Overview";
+import SavingsPage from "./pages/Savings";
+import { BillCheck } from "./pages/Finance";
 import { DATA_FIRST, fmtDT, istNow } from "./format";
+import type { Site } from "./data";
+import { HotelCtx, home, hotelStore, isPage, morePages, PAGE, VIEW_IDS, VIEWS, viewStore, type PageId, type ViewId } from "./views";
 
 const I = (d: string) => <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden><path d={d} /></svg>;
 export const ICON: Record<string, ReactNode> = {
@@ -24,23 +30,14 @@ export const ICON: Record<string, ReactNode> = {
   search: I("M11 4a7 7 0 1 0 0 14 7 7 0 0 0 0-14zM20 20l-4-4"),
   mic: I("M12 3a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V6a3 3 0 0 0-3-3zM5 11a7 7 0 0 0 14 0M12 18v3"),
   arrow: I("M5 12h14M13 6l6 6-6 6"),
+  bell: I("M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9M13.7 21a2 2 0 0 1-3.4 0"),
+  grid: I("M3 3h8v8H3zM13 3h8v5h-8zM13 10h8v11h-8zM3 13h8v8H3z"),
+  rupee: I("M6 4h12M6 9h12M14 4c3 0 4 2.5 4 5s-2 5-6 5H7l8 7"),
 };
 
-export const PAGES = [
-  { id: "today", label: "Today", hint: "What needs attention now" },
-  { id: "demand", label: "Tomorrow's plan", hint: "Bookings, chiller plan and power-limit risk for tomorrow" },
-  { id: "equipment", label: "Equipment", hint: "Repeat problems and patterns" },
-  { id: "costs", label: "Monthly costs", hint: "Why the bill went up or down" },
-  { id: "bills", label: "Bills & savings", hint: "Bill checks and where to save" },
-  { id: "ask", label: "Ask", hint: "Questions in plain words" },
-] as const;
-const MORE = [
-  { id: "feedback", label: "Alert feedback" },
-  { id: "report", label: "Monthly report" },
-  { id: "accuracy", label: "How accurate is it?" },
-] as const;
-type PageId = (typeof PAGES)[number]["id"] | (typeof MORE)[number]["id"];
 const OLD: Record<string, PageId> = { shift: "today", engineering: "equipment", gm: "costs", finance: "bills", rate: "feedback", method: "accuracy" };
+const NAV_ICON: Partial<Record<PageId, ReactNode>> = { today: ICON.today, attention: ICON.bell, demand: ICON.demand, equipment: ICON.equipment, costs: ICON.costs,
+  bills: ICON.bills, billcheck: ICON.bills, savings: ICON.rupee, overview: ICON.grid, report: ICON.bills, ask: ICON.ask };
 
 /** `now` is the hour on screen and the hour in the data (they are the same: no replay offset). Live: the real time in India; the
  *  live feed (Oct 2026 - Sep 2027, simulated meters) is shown up to this hour only. Looking back: any past hour from 1 Oct 2025. */
@@ -48,20 +45,27 @@ interface Clock { now: string; dataNow: string; live: boolean; setNow: (s: strin
 const Ctx = createContext<Clock>({ now: istNow(), dataNow: istNow(), live: true, setNow: () => {}, go: () => {} });
 export const useClock = () => useContext(Ctx);
 
-function readHash(): PageId {
+function readHash(v: ViewId): PageId {
   const h = window.location.hash.replace("#/", "").split("?")[0];
   if (OLD[h]) return OLD[h];
-  return ([...PAGES, ...MORE].map((p) => p.id) as string[]).includes(h) ? (h as PageId) : "today";
+  return isPage(h) ? h : home(v);
 }
 
 export default function App() {
-  const [page, setPage] = useState<PageId>(readHash());
+  const [view, setViewState] = useState<ViewId>(viewStore.get);
+  const [page, setPage] = useState<PageId>(() => readHash(viewStore.get()));
+  const [hotel, setHotelState] = useState<Site>(hotelStore.get);
+  const setHotel = (s: Site) => { hotelStore.set(s); setHotelState(s); };
   const [real, setReal] = useState(istNow());
   const [past, setPastRaw] = useState<string | null>(null);
   const setPast = (s: string | null) => setPastRaw(s && s > istNow() ? `${istNow().slice(0, 13)}:00` : s);   // never a future hour
   useEffect(() => { const t = setInterval(() => setReal(istNow()), 30e3); return () => clearInterval(t); }, []);
-  useEffect(() => { const f = () => setPage(readHash()); window.addEventListener("hashchange", f); return () => window.removeEventListener("hashchange", f); }, []);
-  const go = (p: PageId) => { window.location.hash = `#/${p}`; setPage(p); window.scrollTo(0, 0); };
+  useEffect(() => { const f = () => setPage(readHash(view)); window.addEventListener("hashchange", f); return () => window.removeEventListener("hashchange", f); }, [view]);
+  const go = (p: PageId) => { window.location.hash = `#/${p}`; setPage(p); setMore(false); window.scrollTo(0, 0); };
+  const setView = (v: ViewId) => { viewStore.set(v); setViewState(v); go(home(v)); };            // switching view opens that view's home
+  const [more, setMore] = useState(false);
+  const menu = VIEWS[view].menu, extra = morePages(view);
+  const inMore = extra.includes(page);
   const live = past == null;
   const now = past ?? real;
   const clock: Clock = { now, dataNow: now, live, setNow: setPast, go };
@@ -71,13 +75,20 @@ export default function App() {
   const openPicker = () => { const el = pickRef.current; if (!el) return; try { el.showPicker(); } catch { el.focus(); } };
   return (
     <Ctx.Provider value={clock}>
-      <div className="shell">
+     <HotelCtx.Provider value={{ hotel, setHotel }}>
+      <div className={`shell view-${view}`}>
        <div className="frame">
         <header className="top">
           <div className="brand">
             <span className="circle dark" aria-hidden><svg width="18" height="18" viewBox="0 0 32 32"><path d="M17 3 8 18h6.5l-2 11L23 13h-6.5z" fill="#E8613C" /></svg></span>
             <span>Saffron Suites<small>Energy</small></span>
           </div>
+          <label className="view-as">
+            <span>View as</span>
+            <select value={view} onChange={(e) => setView(e.target.value as ViewId)} aria-label="View as">
+              {VIEW_IDS.map((v) => <option key={v} value={v}>{VIEWS[v].label}</option>)}
+            </select>
+          </label>
           <span className="spacer" />
           <span className="clock">
             {live && <span className="live-dot" aria-hidden />}
@@ -105,18 +116,27 @@ export default function App() {
           <button className="search" onClick={() => go("ask")}><span className="circle">{ICON.search}</span><span className="search-label">Ask anything about the hotels…</span></button>
         </header>
         <nav className="nav" aria-label="Sections">
-          {PAGES.map((p) => (
-            <button key={p.id} title={p.hint} aria-current={page === p.id ? "page" : undefined} onClick={() => go(p.id)}>{ICON[p.id]}{p.label}</button>
+          {menu.map((p) => (
+            <button key={p} title={PAGE[p].hint} aria-current={page === p ? "page" : undefined} onClick={() => go(p)}>{NAV_ICON[p]}{PAGE[p].label}</button>
           ))}
-          <span className="sep" aria-hidden />
-          {MORE.map((p) => (
-            <button key={p.id} className="minor" aria-current={page === p.id ? "page" : undefined} onClick={() => go(p.id)}>{p.label}</button>
-          ))}
+          <span className="more-wrap" onKeyDown={(e) => e.key === "Escape" && setMore(false)}>
+            <button className={`minor${inMore ? " here" : ""}`} aria-expanded={more} aria-haspopup="true" aria-current={inMore ? "page" : undefined}
+                    onClick={() => setMore(!more)}>{inMore ? `More: ${PAGE[page].label}` : "More"} ▾</button>
+            {more && (
+              <span className="more-menu" role="menu">
+                {extra.map((p) => <button key={p} role="menuitem" aria-current={page === p ? "page" : undefined} onClick={() => go(p)}>{PAGE[p].label}</button>)}
+              </span>
+            )}
+          </span>
         </nav>
-        {page === "today" && <TodayHero />}
+        {page === "today" && view !== "duty" && <TodayHero />}
         <div className="content">
           <main>
-            {page === "today" && <Shift />}
+            {page === "today" && (view === "duty" ? <DutyToday /> : <Shift />)}
+            {page === "attention" && <Attention />}
+            {page === "overview" && <Overview />}
+            {page === "savings" && <SavingsPage />}
+            {page === "billcheck" && <BillCheck />}
             {page === "demand" && <Demand />}
             {page === "equipment" && <Engineering />}
             {page === "costs" && <GM />}
@@ -132,6 +152,7 @@ export default function App() {
         </div>
        </div>
       </div>
+     </HotelCtx.Provider>
     </Ctx.Provider>
   );
 }

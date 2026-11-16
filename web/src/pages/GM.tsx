@@ -17,7 +17,7 @@ const COMP_NAME: Record<string, string> = {
   "Electricity duty": "Electricity duty", "Municipal tax": "Municipal tax", "ToD net": "Time-of-day adjustment", "Diesel (DG)": "Diesel generator",
 };
 
-function sentence(group: string, v: number, c: BillChange["context"], d: BillChange): string {
+export function sentence(group: string, v: number, c: BillChange["context"], d: BillChange): string {
   const s = `${v >= 0 ? "added" : "saved"} ${inr(Math.abs(v))}`;
   switch (group) {
     case "Weather": return `Hotter or cooler weather ${s}. The hottest hour went from ${c.tmax_A.toFixed(0)} °C to ${c.tmax_B.toFixed(0)} °C, and the hotel needed ${c.cdh_B > c.cdh_A ? `${(c.cdh_B / Math.max(c.cdh_A, 1)).toFixed(1)}× as much` : "less"} cooling.`;
