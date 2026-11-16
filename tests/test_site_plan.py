@@ -177,3 +177,35 @@ def test_check_approved_plan(c, site):
         assert a["site"] == site and a["rule"] == "PLAN_DEVIATION"
     r, s = post(c, {"site": site, "month": "2026-10", "as_of": "2026-10-31T23:00"}, "/savings")
     assert r.status_code == 200 and s["site"] == site and s["totals"]["verified_inr"] == 0      # nothing saved: suggested only
+
+
+# ---- hold times: setpoint >= 3 h, staging >= 2 h unless the load needs it (all hotels) ------------------------------------------------
+HOLD_DAYS = ["2026-10-05", "2026-11-20", "2026-12-20", "2027-01-15", "2027-02-10", "2027-03-12", "2027-04-08", "2027-05-20", "2027-06-15", "2027-08-10"]
+
+
+def _hours(a):
+    def h(t):
+        return int(t[:2]) + (24 if "next day" in t or (t.startswith("00:00") and a["start"] != "00:00") else 0)
+    return h(a["end"]) - h(a["start"])
+
+
+@pytest.mark.parametrize("site", ["GGN", "JAI", "GOA"])
+@pytest.mark.parametrize("date", HOLD_DAYS)
+def test_setpoint_and_staging_hold_times(c, site, date):
+    r, j = post(c, {"site": site, "date": date})
+    assert r.status_code == 200
+    chw = [a for a in j["actions"] if a["group"] == "chw"]
+    ch = [a for a in j["actions"] if a["group"] == "chillers"]
+    assert sum(_hours(a) for a in chw) == 24 and sum(_hours(a) for a in ch) == 24
+    for a in chw:
+        assert _hours(a) >= OP.CHW_MIN_H or len(chw) == 1, (a["start"], a["end"], a["setting"])
+    for a in ch:
+        if _hours(a) < OP.STAGE_MIN_H and len(ch) > 1:
+            assert "Only 1 h" in a["reason"] and ("the load needs it" in a["reason"] or "never allowed" in a["reason"]), a["reason"]
+
+
+def test_hold_setpoint_prefers_7():
+    S, R = OP.CHW_STD, OP.CHW_RESET
+    assert OP.hold_setpoint([S] * 10 + [R, R] + [S] * 12) == [S] * 24                       # 2 h of 8.0 °C is too short: stays at 7.0
+    out = OP.hold_setpoint([R] * 10 + [S] + [R] * 13)                                       # 1 h of 7.0 °C: grows to 3 h, never turned into 8.0
+    assert out.count(S) == 3 and out[10] == S and all(b - a >= 3 for a, b, _ in OP.windows(out))
