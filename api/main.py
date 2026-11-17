@@ -520,9 +520,37 @@ def _check(date: str, actions: list | None, as_of: str, suggested: bool = False,
     return 200, out
 
 
+SIM_COLS = ("chiller_ch1_kw", "chiller_ch3_kw", "chillers_kw", "chiller_load_tr", "chw_setpoint_c", "ahu_banquet_kw", "laundry_kw",
+            "water_heating_kw", "ev_chargers_kw", "kva", "total_kwh")
+SIM_MAX_ROWS = 48
+SIM_NOTE = ("Checked against SIMULATED readings sent with the request (Plant Room demo), not the meters. Simulated readings never feed "
+            "savings, bills or the live feed.")
+
+
+def _sim_meters(raw: list, date: str) -> tuple[pd.DataFrame | None, str | None]:
+    """Hourly rows sent by the Plant Room simulation (same columns as the live meters); None and the reason when they can't be read."""
+    if not raw or len(raw) > SIM_MAX_ROWS:
+        return None, f"meters must be 1 to {SIM_MAX_ROWS} hourly rows."
+    day = pd.Timestamp(date)
+    rows = []
+    for i, r in enumerate(raw, 1):
+        if not isinstance(r, dict):
+            return None, f"meters row {i} is not an object."
+        try:
+            t = pd.Timestamp(str(r.get("timestamp", ""))[:13] + ":00")
+        except ValueError:
+            return None, f"meters row {i}: timestamp must be YYYY-MM-DDTHH:00."
+        if not (day <= t < day + pd.Timedelta(days=2)):
+            return None, f"meters row {i}: {t} is not on {date} or the next day."
+        rows.append({"timestamp": t, **{c: _num(r.get(c), float("nan")) for c in SIM_COLS}})
+    return pd.DataFrame(rows).drop_duplicates("timestamp", keep="last").sort_values("timestamp").reset_index(drop=True), None
+
+
 @app.post("/check")
 async def check(req: Request):
-    """Plan vs actual for one date: {date, site?, as_of?, actions? (the saved plan's steps; omitted = the suggested plan)}."""
+    """Plan vs actual for one date: {date, site?, as_of?, actions? (the saved plan's steps; omitted = the suggested plan)}.
+    Additive (Plant Room demo): with `meters` (hourly rows, the live-meter columns) the same plan check runs on those simulated rows up to
+    `as_of` instead of the live meters; the answer carries meters_source = "simulated" and is never cached or counted anywhere."""
     notes: list[str] = []
     b = await _read_body(req, notes)
     site = site_of(b.get("site"))
@@ -534,6 +562,19 @@ async def check(req: Request):
         return JSONResponse({"error": f"No plan context for {date}. Dates covered: {m['dates'][0]} to {m['dates'][1]}."}, status_code=422)
     acts = b.get("actions") if isinstance(b.get("actions"), list) else None
     sugg = b.get("plan_source") == "suggested"                           # the page sends the suggested plan it shows
+    if b.get("meters") is not None:
+        if site != "GGN":
+            return JSONResponse({"error": "Simulated meters are only supported for Gurugram (the Plant Room demo).", "notes": notes}, status_code=422)
+        sim, why = _sim_meters(b["meters"] if isinstance(b["meters"], list) else [], date)
+        if sim is None:
+            return JSONResponse({"error": why, "notes": notes}, status_code=422)
+        a = str(b.get("as_of") or "")[:16]
+        as_of = a if re.fullmatch(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}", a) else sim.timestamp.max().strftime("%Y-%m-%dT%H:00")
+        ref = dict(REFS[date], curve=META["curve"], ahu_overrun_kwh=META["ahu_overrun_kwh"], chw_pct_per_c=META.get("chw_pct_per_c"))
+        if not acts:
+            notes.append("No saved plan was sent: nothing is checked.")
+        out = PC.check_day(date, acts or [], sim, as_of, ref, META["tariff"], META["pf"], suggested=sugg or not acts)
+        return dict(out, site=site, source="saved plan" if acts and not sugg else "suggested plan", meters_source="simulated", notes=notes + [SIM_NOTE])
     st, out = _check(date, acts, _as_of(b.get("as_of")), suggested=sugg, site=site)
     if st == 200 and acts and sugg:
         out["notes"] = ["No plan was saved for this day: the suggested plan is shown with what it would have saved, but nothing is checked or counted."] + out["notes"]

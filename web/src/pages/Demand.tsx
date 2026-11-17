@@ -14,6 +14,8 @@ import { loadPlan, plannerName, postPlan, setPlannerName } from "../planStore";
 import { useDayCheck } from "../dayCheck";
 import { useHotel } from "../views";
 import { SiteSwitch } from "./Shift";
+import { usePlantApplied } from "../plant/client";
+import type { Applied } from "../plant/model";
 
 // plain names for the "what changed" notes when bookings change the plan
 const PLAIN: Record<string, string> = { chillers: "Chillers", chw: "Chilled water", ahu: "Banquet cooling", laundry: "Laundry", water: "Water heating", ev: "EV charging",
@@ -170,8 +172,9 @@ function CheckLine({ c }: { c: CheckStep }) {
   );
 }
 
-function Step({ a, edit, decision, canDecide, busy, onDecide, chk, changed }: {
+function Step({ a, edit, decision, canDecide, busy, onDecide, chk, changed, plant }: {
   a: SavedAction; edit?: PlanView["edits"][string]; decision?: PlanView["decisions"][string]; canDecide: boolean; busy: boolean; chk?: CheckStep; changed?: string;
+  plant?: Applied;
   onDecide: (ev: "approve" | "skip" | "edit", extra?: Record<string, string>) => void;
 }) {
   const [mode, setMode] = useState<"" | "skip" | "edit">("");
@@ -194,6 +197,7 @@ function Step({ a, edit, decision, canDecide, busy, onDecide, chk, changed }: {
         <div className="guard small"><span aria-hidden>🛡</span><span>{a.guardrail}</span></div>
         {chk && <CheckLine c={chk} />}
         {decision && <div className={`small status ${state}`}>{decision.event === "approve" ? `Approved by ${decision.by} at ${decision.at.slice(11)}` : `Skipped by ${decision.by} at ${decision.at.slice(11)}: ${decision.reason}`}</div>}
+        {plant && decision?.event === "approve" && <div className="small plant-applied" data-testid="plant-applied">{plant.kind === "override" ? `Overridden in plant room ${plant.at.slice(11)} (${plant.value}): ${plant.reason}` : `Applied in plant room ${plant.at.slice(11)}`} · simulation</div>}
         {canDecide && (
           <div className="btn-row" style={{ marginTop: 8 }}>
             <button className="btn" disabled={busy || state === "ok"} onClick={() => onDecide("approve")}>Approve</button>
@@ -349,6 +353,7 @@ function TomorrowPlan() {
   useEffect(() => setJustSaved(false), [date, site]);
   const save = async () => { setPlannerName(name); await submit(); setJustSaved(true); };
   const approved = actions.filter((a) => saved?.decisions[a.id]?.event === "approve").length;
+  const plantApplied = usePlantApplied(date, site);                // Plant Room simulation: "Applied in plant room hh:mm" per approved step
   const set = (k: keyof Form, v: unknown) => form && setForm({ ...form, [k]: v, touched: { ...form.touched, [k]: true } });
 
   async function send(body: Record<string, unknown>) {
@@ -463,7 +468,7 @@ function TomorrowPlan() {
           <ol className="timeline">
             {actions.map((a) => (
               <Step key={a.id + (saved?.plan?.n ?? 0)} a={a} edit={saved?.edits[a.id]} decision={dirty ? undefined : saved?.decisions[a.id]} canDecide={!!name.trim()} busy={busy}
-                    onDecide={(ev, x) => decide(a, ev, x)} chk={past ? chkBy[a.id] : undefined} changed={changed[a.id]} />
+                    onDecide={(ev, x) => decide(a, ev, x)} chk={past ? chkBy[a.id] : undefined} changed={changed[a.id]} plant={plantApplied[a.id]} />
             ))}
           </ol>
           {!name.trim() && <p className="small muted">Enter your name in the bookings card to save, approve, skip or change steps. It is kept on this device.</p>}

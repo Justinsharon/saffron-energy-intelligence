@@ -21,3 +21,10 @@
   to = "https://saffron-api-579804303171.asia-south1.run.app/:splat"
   status = 200
   force = true
+
+# Plant Room (SIMULATION screen, web/plant.html) on this site at /plant. A second site built from this repo with SAFFRON_SITE=plant serves it
+# at / instead (web/scripts/site-role.mjs); both use the same /api proxy, the same functions and the same gist (plant_state.json).
+[[redirects]]
+  from = "/plant"
+  to = "/plant.html"
+  status = 200

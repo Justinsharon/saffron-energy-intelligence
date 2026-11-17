@@ -1,0 +1,10 @@
+https://saffron-api-579804303171.asia-south1.run.app
+/plan 2026-11-19: 9 steps, weather: Open-Meteo hourly forecast (2180 ms)
+  FAIL    1744 ms  0 all steps applied, no fault (after event): meters IGNORED (this API build predates the Plant Room: redeploy)
+  FAIL    1763 ms  1 banquet AHU left on after event: meters IGNORED (this API build predates the Plant Room: redeploy)
+  FAIL    1781 ms  1 fixed by Apply on the AHU off step: meters IGNORED (this API build predates the Plant Room: redeploy)
+  FAIL    1794 ms  2 CHW set to 5.5 °C after a complaint: meters IGNORED (this API build predates the Plant Room: redeploy)
+  FAIL    1783 ms  2 cleared: meters IGNORED (this API build predates the Plant Room: redeploy)
+  FAIL     381 ms  3 peak creep: laundry + AHU in 18–22: meters IGNORED (this API build predates the Plant Room: redeploy)
+  FAIL    1754 ms  3 cleared: meters IGNORED (this API build predates the Plant Room: redeploy)
+NOT all pass

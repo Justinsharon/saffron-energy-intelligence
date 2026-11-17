@@ -5,7 +5,7 @@
 // models and per-hotel rules are not shipped to the browser). Recommend only either way.
 import { byTime, planFor, riskFor, type Action, type Booking, type PlanDay, type PlanSite, type RiskCal } from "./plan";
 
-export interface PlanRequest { date: string; site?: PlanSite; rooms?: number; guests?: number; covers?: number; bookings?: Booking[] }
+export interface PlanRequest { date: string; site?: PlanSite; rooms?: number; guests?: number; covers?: number; bookings?: Booking[]; temps?: number[] }
 export interface PlanRisk { peak: number; upper: number; stack: number; p_exceed: number | null; level: string; hour: number }
 export interface PlanResult {
   source: "api" | "offline";

@@ -1,0 +1,108 @@
+// Plant Room unit checks + fault scenarios, run in Node by tests/test_plant_room.py and tools/plant_cloud_check.py (bundled with esbuild).
+// Input (argv[2]): { date, forecast, bookings, actions (the API plan's actions) }. Output (argv[3]): { unit: {...}, scenarios: [...] }.
+// Each scenario = the meter rows the Saffron app would send to /check, plus what the browser fallback (plant/check.ts) finds on them.
+import assert from "node:assert/strict";
+import { readFileSync, writeFileSync } from "node:fs";
+import { actionId } from "../src/plan";
+import { checkDay } from "../src/plant/check";
+import { CONTROLLED, MONITORED, NOISE, checkWindow, equipOf, hourRow, noise, snapshot, type SimDay, type SimState } from "../src/plant/model";
+import { applyPlantEvent, empty, type PlantEntry } from "../src/plant/store";
+
+const inp = JSON.parse(readFileSync(process.argv[2], "utf8"));
+const root = new URL("../public/data/", import.meta.url);
+const read = (p: string) => JSON.parse(readFileSync(new URL(p, root), "utf8"));
+const pd = read(`plan/${inp.date}.json`);
+const steps = inp.actions.map((a: any) => ({ ...a, id: actionId(a), decision: "approve" }));
+const day: SimDay = { date: inp.date, forecast: { kw: inp.forecast.kw, kva: inp.forecast.kva, tr: inp.forecast.tr, temp: inp.forecast.temp_c },
+  steps, bookings: inp.bookings, profile: read(`plant/${inp.date}.json`), index: read("plant/index.json"), ref: pd.ref, tariff: pd.tariff, pf: pd.pf };
+const BY = "TEST – Claude Code";
+let clock = 0;
+const at = () => `2026-11-18 10:${String(clock++).padStart(2, "0")}`;
+function ev(e: PlantEntry, body: Record<string, unknown>) { return applyPlantEvent(e, { by: BY, ...body }, at(), steps); }
+const sim = (e: PlantEntry): SimState => ({ applied: e.applied, faults: e.faults });
+
+// ---- unit checks ----
+const unit: Record<string, boolean> = {};
+// 1. noise stays within ±2.5 % of the curve
+let worst = 0;
+for (let m = 0; m < 24 * 60; m++) for (const k of ["main", "CH-1", "CH-3", "AHU-A", "LDY", "DHW", "tr"]) worst = Math.max(worst, Math.abs(noise(k, day.date, m)));
+const base = empty();
+for (let m = 0; m < 24 * 60; m += 7) {
+  const t = m / 60, a = snapshot(day, sim(base), t), b = snapshot(day, sim(base), t, false);
+  if (b.kva > 0) worst = Math.max(worst, Math.abs(a.kva / b.kva - 1));
+  for (const id of ["CH-1", "CH-3", "LAUNDRY", "HP-DHW"] as const) if (b.equip[id].kw > 0.5) worst = Math.max(worst, Math.abs(a.equip[id].kw / b.equip[id].kw - 1));
+}
+assert.ok(worst <= NOISE + 1e-9, `noise ${worst}`); unit.noise_within_2_5_pct = true;
+// 2. nothing changes without Apply: habit until a person applies; then the plan
+const chw = steps.find((s: any) => s.group === "chw" && s.setpoint_c > 7);
+assert.ok(chw, "the test day needs an 8.0 °C block");
+const h = Number(chw.start.slice(0, 2)) + 1;
+const before = snapshot(day, sim(base), h + 0.5, false);
+assert.equal(before.setpoint, 7.0); assert.equal(before.equip["CH-3"].following === "plan" || before.equip["CH-1"].following === "plan", false);
+const ap = ev(base, { event: "apply", stepId: chw.id, simHour: h });
+assert.ok(!ap.error);
+const after = snapshot(day, sim(ap.entry), h + 0.5, false);
+assert.equal(after.setpoint, chw.setpoint_c);
+const chKw = (s: typeof after) => s.equip["CH-1"].kw + s.equip["CH-3"].kw;
+assert.ok(chKw(after) < chKw(before), "warmer chilled water must lower chiller kW");
+assert.ok(after.kva < before.kva, "main kVA follows");
+assert.equal(snapshot(day, sim(ap.entry), h - 0.5, false).setpoint, 7.0, "before the apply time the equipment still followed habit");
+unit.habit_until_apply_then_plan = true;
+// 3. CHW override below 6.5 °C refused, with the reason, and the refusal logged
+const ref = ev(base, { event: "override", stepId: chw.id, value: 6.0, reason: "guest complaint", simHour: h });
+assert.match(ref.error ?? "", /never below 6\.5/);
+assert.equal(ref.entry.applied[chw.id], undefined);
+assert.equal(ref.entry.audit.at(-1)?.event, "override refused");
+const okOv = ev(base, { event: "override", stepId: chw.id, value: 7.5, reason: "guest complaint", simHour: h });
+assert.ok(!okOv.error && okOv.entry.applied[chw.id].value === 7.5);
+assert.ok(ev(base, { event: "override", stepId: chw.id, value: 7.5, reason: "", simHour: h }).error, "an override needs a reason");
+unit.chw_below_6_5_refused = true;
+// 4. monitored-only systems: never in a step, never accept an action; unapproved steps refused; a name is required
+for (const m of MONITORED) {
+  assert.ok(ev(base, { event: "apply", stepId: m.id, simHour: 1 }).error?.startsWith("Monitored only"));
+  assert.ok(!CONTROLLED.some((c) => c.id === (m.id as string)));
+}
+for (const s of steps) for (const id of equipOf(s)) assert.ok(!MONITORED.some((m) => m.id === (id as string)));
+assert.ok(ev(base, { event: "apply", stepId: "chillers|99:00|nothing", simHour: 1 }).error?.includes("approved"));
+assert.ok(applyPlantEvent(base, { event: "apply", stepId: chw.id, simHour: 1 }, at(), steps).error?.includes("Signed in as"));
+unit.monitored_only_no_actions = true;
+// 5. every apply / override / fault / clear is in the audit log
+let e = empty();
+for (const s of steps) e = ev(e, { event: "apply", stepId: s.id, simHour: 6 }).entry;
+e = ev(e, { event: "fault", type: "chw_low", simHour: 9 }).entry;
+e = ev(e, { event: "clearFault", simHour: 10 }).entry;
+assert.equal(e.audit.length, steps.length + 2);
+assert.ok(e.audit.every((r) => r.by === BY && r.at && r.event && r.what));
+unit.every_action_audited = true;
+
+// ---- fault scenarios: what the app sends to /check ----
+const allApplied = () => { let x = empty(); for (const s of steps) x = ev(x, { event: "apply", stepId: s.id, simHour: 6 }).entry; return x; };
+const ahu = steps.find((s: any) => s.group === "ahu");
+const off = Number(ahu.end.slice(0, 2)) + (ahu.end.includes("next day") ? 24 : 0);
+const scenarios: any[] = [];
+function emit(name: string, e: PlantEntry, now: number, expectAlert: boolean, group?: string) {
+  const rows = checkWindow(now, e.lastFix).map((k) => hourRow(day, sim(e), k, now));
+  const asOf = `${day.date}T${String(Math.floor(now)).padStart(2, "0")}:${String(Math.floor((now % 1) * 60)).padStart(2, "0")}`;
+  const local = checkDay(day.date, steps, rows, asOf, day.ref, day.tariff, day.pf);
+  scenarios.push({ name, as_of: asOf, meters: rows, expect_alert: expectAlert, group, local: { alerts: local.alerts.map((a) => ({ id: a.id, title: a.title, cost: a.cost })), steps: local.steps } });
+}
+let s1 = allApplied();
+emit("0 all steps applied, no fault (after event)", s1, off + 1, false);
+s1 = ev(s1, { event: "fault", type: "ahu_left_on", simHour: off + 1 }).entry;
+emit("1 banquet AHU left on after event", s1, off + 1, true, "ahu");
+const fixed = ev(s1, { event: "apply", stepId: ahu.id, simHour: off + 1.2 });
+assert.equal(fixed.entry.faults[0].fixedAt, off + 1.2, "Apply on the AHU step fixes fault 1");
+emit("1 fixed by Apply on the AHU off step", fixed.entry, off + 1.3, false);
+let s2 = ev(allApplied(), { event: "fault", type: "chw_low", simHour: 13 }).entry;       // during the conference (one setpoint block)
+emit("2 CHW set to 5.5 °C after a complaint", s2, 14.2, true, "chw");
+s2 = ev(s2, { event: "clearFault", simHour: 14.4 }).entry;
+emit("2 cleared", s2, 14.5, false);
+let s3 = ev(allApplied(), { event: "fault", type: "peak_creep", simHour: 18 }).entry;
+emit("3 peak creep: laundry + AHU in 18–22", s3, 19.3, true, "laundry");
+const creepKva = snapshot(day, sim(s3), 19.3, false).kva, normalKva = snapshot(day, sim(allApplied()), 19.3, false).kva;
+assert.ok(creepKva > normalKva + 50, "peak creep raises site kVA");
+s3 = ev(s3, { event: "clearFault", simHour: 19.5 }).entry;
+emit("3 cleared", s3, 19.6, false);
+for (const s of scenarios) assert.equal(s.local.alerts.length > 0, s.expect_alert, `local check: ${s.name}`);
+unit.local_check_matches_expectations = true;
+writeFileSync(process.argv[3], JSON.stringify({ unit, scenarios, creep_kva: [normalKva, creepKva] }));

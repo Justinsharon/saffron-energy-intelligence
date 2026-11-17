@@ -1,0 +1,11 @@
+19:50:58 app: plan saved and 9 steps approved
+19:50:59 plant: 9 approved steps in the queue; banner "SIMULATION · Gurugram · Sim time Thu 19 Nov 06:00"
+19:51:02 plant: every step applied (Applied by … shown)
+19:51:02 plant: CHW override to 6.0 °C refused with the reason shown
+19:51:02 plant: monitored-only tiles have no controls
+19:51:04 app: Tomorrow's plan shows 9 × "Applied in plant room"
+19:51:05 plant: fault 1 injected (banquet AHU left on after event)
+19:51:10 app: alert visible after 5.3 s: "Plan said banquet AHUs off at 19:00; they ran 19:00–21:00"
+19:51:15 app: alert resolved 4.3 s after Apply fix
+19:51:15 console: [plant room] /check path: Cloud Run API (11 ms), 1 alert(s) | [plant room] /check path: Cloud Run API (14 ms), 0 alert(s)
+19:51:15 PASS
