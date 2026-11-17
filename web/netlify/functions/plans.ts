@@ -4,7 +4,7 @@
 // The server stamps the time (IST) and re-checks the guardrails on every submitted plan and edit. Recommend only: no equipment is
 // controlled from here; approving an action records that a person will carry it out.
 import { configured, readJSON, writeJSON } from "../lib/gist";
-import { applyEvent, checkActions, istStamp, planKey, view, type Entry } from "../../src/planlog";
+import { applyEvent, checkActions, isScenario, istStamp, planKey, view, type Entry } from "../../src/planlog";
 
 const FILE = "plans.json";
 const DATE = /^\d{4}-\d{2}-\d{2}$/;
@@ -23,7 +23,11 @@ export default async (req: Request) => {
       const plans: Record<string, unknown[]> = {};
       for (const [k, e] of Object.entries(all)) {
         const d = k.slice(0, 10);
-        if (d.startsWith(month) && k === planKey(d, site)) { const a = checkActions(view(d, e, "gist")); if (a.length) plans[d] = a; }
+        if (d.startsWith(month) && k === planKey(d, site)) {
+          const v = view(d, e, "gist");
+          if (isScenario(v.plan?.inputs)) continue;                     // weather scenarios are what-ifs: never in plan savings or reports
+          const a = checkActions(v); if (a.length) plans[d] = a;
+        }
       }
       return Response.json({ month, site, plans, storage: "gist" });
     }

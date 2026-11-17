@@ -7,6 +7,8 @@ import { actionId } from "../src/plan";
 import { checkDay } from "../src/plant/check";
 import { CONTROLLED, MONITORED, NOISE, checkWindow, equipOf, hourRow, noise, snapshot, type SimDay, type SimState } from "../src/plant/model";
 import { applyPlantEvent, empty, type PlantEntry } from "../src/plant/store";
+import { applyEvent, isScenario, view } from "../src/planlog";
+import { costBreakdown } from "../src/plant/cost";
 
 const inp = JSON.parse(readFileSync(process.argv[2], "utf8"));
 const root = new URL("../public/data/", import.meta.url);
@@ -16,6 +18,7 @@ const steps = inp.actions.map((a: any) => ({ ...a, id: actionId(a), decision: "a
 const day: SimDay = { date: inp.date, forecast: { kw: inp.forecast.kw, kva: inp.forecast.kva, tr: inp.forecast.tr, temp: inp.forecast.temp_c },
   steps, bookings: inp.bookings, profile: read(`plant/${inp.date}.json`), index: read("plant/index.json"), ref: pd.ref, tariff: pd.tariff, pf: pd.pf };
 const BY = "TEST – Claude Code";
+const ahu0 = () => steps.find((s: any) => s.group === "ahu");
 let clock = 0;
 const at = () => `2026-11-18 10:${String(clock++).padStart(2, "0")}`;
 function ev(e: PlantEntry, body: Record<string, unknown>) { return applyPlantEvent(e, { by: BY, ...body }, at(), steps); }
@@ -93,6 +96,29 @@ fx = applyPlantEvent(fx, { event: "sync", simHour: 14 }, at(), steps, later).ent
 assert.ok(fx.faults.every((f) => f.fixedAt !== undefined) || !steps.some((s: any) => s.id === chw.id), "Done after the fault fixes it");
 unit.meters_follow_done_in_app = true;
 
+// 7. the Done event written by the plan page / duty Today (plans log) is exactly what the simulator reads; Undo puts the meters back on habit
+let log = applyEvent(undefined, { event: "submit", by: BY, site: "GGN", inputs: { rooms: 180, guests: 300, covers: 400, bookings: inp.bookings, notes: "", temps_source: "x" },
+  actions: steps.map(({ decision, ...a }: any) => a) }, "2026-11-18 08:00");
+for (const s of steps) log = applyEvent(log, { event: "approve", by: BY, action_id: s.id }, "2026-11-18 08:01");
+log = applyEvent(log, { event: "done", by: "Rahul", action_id: ahu0().id }, "2026-11-18 08:05");
+let pv = view(inp.date, log, "gist");
+assert.deepEqual(Object.keys(pv.duty), [ahu0().id]);
+let ps = applyPlantEvent(empty(), { event: "sync", simHour: 7 }, at(), steps, pv.duty).entry;
+assert.equal(ps.applied[ahu0().id]?.by, "Rahul"); assert.equal(ps.audit.at(-1)?.event, "step marked done");
+log = applyEvent(log, { event: "undone", by: "Rahul", action_id: ahu0().id }, "2026-11-18 08:06");
+pv = view(inp.date, log, "gist");
+assert.equal(pv.duty[ahu0().id], undefined);
+ps = applyPlantEvent(ps, { event: "sync", simHour: 8 }, at(), steps, pv.duty).entry;
+assert.equal(ps.applied[ahu0().id], undefined, "Undo: back on habit"); assert.equal(ps.audit.at(-1)?.event, "done undone");
+assert.throws(() => applyEvent(log, { event: "done", by: "Rahul", action_id: "nope" }, "x"));
+unit.done_event_read_by_simulator = true;
+// 8. weather scenarios never count: flagged by isScenario (plans month listing, device fallback and Today's check skip them); TEST-only withdraw
+assert.ok(isScenario({ weather_mode: "scenario-40C" } as any) && !isScenario({ weather_mode: "live" } as any) && !isScenario({} as any));
+assert.equal(view(inp.date, applyEvent(log, { event: "withdraw", by: "demo reset" }, "x"), "gist").plan, null);
+const real = applyEvent(undefined, { event: "submit", by: "Meera", site: "GGN", inputs: {}, actions: steps.map(({ decision, ...a }: any) => a) }, "x");
+assert.throws(() => applyEvent(real, { event: "withdraw", by: "demo reset" }, "y"), /TEST/);
+unit.scenario_and_withdraw_rules = true;
+
 // ---- fault scenarios: what the app sends to /check ----
 const allApplied = () => applyPlantEvent(empty(), { event: "sync", simHour: 6 }, at(), steps, doneAll).entry;
 const ahu = steps.find((s: any) => s.group === "ahu");
@@ -122,5 +148,18 @@ assert.ok(creepKva > normalKva + 50, "peak creep raises site kVA");
 s3 = ev(s3, { event: "clearFault", simHour: 19.5 }).entry;
 emit("3 cleared", s3, 19.6, false);
 for (const s of scenarios) assert.equal(s.local.alerts.length > 0, s.expect_alert, `local check: ${s.name}`);
+// 9. the alert card's cost: kWh x tariff = ₹ shown; the rows add up to the total; "all day" = ₹ an hour x 24
+{
+  const rows = checkWindow(off + 1, s1.lastFix).map((k) => hourRow(day, sim(s1), k, off + 1));
+  const a = checkDay(day.date, steps, rows, `${day.date}T${String(off + 1).padStart(2, "0")}:00`, day.ref, day.tariff, day.pf).alerts[0];
+  const c = costBreakdown(a);
+  const rate = (day.tariff.energy + day.tariff.fsa + day.tariff.duty) / day.pf;
+  assert.ok(Math.abs(c.kwh * rate - c.soFar) <= 1, `kWh x tariff ${c.kwh * rate} vs ${c.soFar}`);
+  assert.ok(Math.abs(c.rows.reduce((x, r) => x + r.kwh, 0) - c.kwh) <= 0.3, "hour rows add up");
+  assert.ok(Math.abs(c.rows.reduce((x, r) => x + r.inr, 0) - c.soFar) <= 3);
+  assert.equal(c.allDay, Math.round(a.per_hour * 24));
+  assert.equal(c.hours, 2);
+  unit.alert_cost_arithmetic = true;
+}
 unit.local_check_matches_expectations = true;
 writeFileSync(process.argv[3], JSON.stringify({ unit, scenarios, creep_kva: [normalKva, creepKva] }));

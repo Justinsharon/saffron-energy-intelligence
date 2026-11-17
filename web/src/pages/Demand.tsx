@@ -9,7 +9,7 @@ import { addMs, DAY_MS, fmtD, inr, istNow, n, parse } from "../format";
 import { LOAD } from "../copy";
 import { actionId, hh, TAG, type Booking, type PlanDay, type PlanSite, type RiskCal } from "../plan";
 import { apiPlan, checkPlan, getPlan, RETRY_TIMEOUT_MS, type CheckResult, type CheckStep, type PlanResult } from "../planApi";
-import { checkActions, type PlanView, type SavedAction } from "../planlog";
+import { checkActions, isScenario, type PlanView, type SavedAction } from "../planlog";
 import { loadPlan, plannerName, postPlan, setPlannerName } from "../planStore";
 import { useDayCheck } from "../dayCheck";
 import { useHotel } from "../views";
@@ -173,9 +173,9 @@ function CheckLine({ c }: { c: CheckStep }) {
   );
 }
 
-function Step({ a, edit, decision, canDecide, busy, onDecide, chk, changed, plant }: {
+function Step({ a, edit, decision, canDecide, busy, onDecide, chk, changed, plant, duty, onDuty }: {
   a: SavedAction; edit?: PlanView["edits"][string]; decision?: PlanView["decisions"][string]; canDecide: boolean; busy: boolean; chk?: CheckStep; changed?: string;
-  plant?: Applied;
+  plant?: Applied; duty?: PlanView["duty"][string]; onDuty?: (ev: "done" | "undone") => void;
   onDecide: (ev: "approve" | "skip" | "edit", extra?: Record<string, string>) => void;
 }) {
   const [mode, setMode] = useState<"" | "skip" | "edit">("");
@@ -198,7 +198,15 @@ function Step({ a, edit, decision, canDecide, busy, onDecide, chk, changed, plan
         <div className="guard small"><span aria-hidden>🛡</span><span>{a.guardrail}</span></div>
         {chk && <CheckLine c={chk} />}
         {decision && <div className={`small status ${state}`}>{decision.event === "approve" ? `Approved by ${decision.by} at ${decision.at.slice(11)}` : `Skipped by ${decision.by} at ${decision.at.slice(11)}: ${decision.reason}`}</div>}
-        {plant && decision?.event === "approve" && <div className="small plant-applied" data-testid="plant-applied">{`Done by ${plant.by} at ${plant.at.slice(11)} · meter simulator follows the plan from sim ${hhmmSim(plant.simHour)}`}</div>}
+        {decision?.event === "approve" && onDuty && (
+          <div className="btn-row duty-done" style={{ marginTop: 6, alignItems: "center" }}>
+            {duty?.event === "done"
+              ? <><span className="small status ok" data-testid="done-by">Done by {duty.by} at {duty.at.slice(11)}</span>
+                  <button className="btn ghost" style={{ padding: "4px 10px", fontSize: 13 }} disabled={busy} onClick={() => onDuty("undone")}>Undo</button></>
+              : <button className="btn" disabled={busy || !canDecide} onClick={() => onDuty("done")} data-testid="mark-done">Mark done (duty engineer)</button>}
+          </div>
+        )}
+        {plant && decision?.event === "approve" && duty?.event === "done" && <div className="small plant-applied" data-testid="plant-applied">{`Done by ${plant.by} at ${plant.at.slice(11)} · meter simulator follows the plan from sim ${hhmmSim(plant.simHour)}`}</div>}
         {canDecide && (
           <div className="btn-row" style={{ marginTop: 8 }}>
             <button className="btn" disabled={busy || state === "ok"} onClick={() => onDecide("approve")}>Approve</button>
@@ -278,19 +286,24 @@ function TomorrowPlan() {
     return () => { on = false; };
   }, [baseKey]);
 
+  // weather: the live forecast, or a clearly labelled what-if: a real hot-day curve (tools/export_plant_profiles.py -> plan/scenario_hot.json)
+  const scen = useData<{ id: "scenario-40C"; date: string; top_c: number; temps: number[]; label: string }>("plan/scenario_hot.json");
+  const [wmode, setWmode] = useState<"live" | "scenario-40C">("live");
+  useEffect(() => { setWmode(saved?.plan?.inputs?.weather_mode === "scenario-40C" ? "scenario-40C" : "live"); }, [saved?.plan?.n, date, site]);
+  const scenOn = wmode === "scenario-40C" && site === "GGN" && !!scen;
   const hourly = site === "GGN" ? wx?.hourly.GGN[date] : undefined;
-  const temps = hourly && hourly.length === 24 ? hourly : null;
+  const temps = scenOn ? scen!.temps : hourly && hourly.length === 24 ? hourly : null;
   // the plan API (models on the actual inputs), 600 ms after the last change; offline estimate in the browser if it fails or is slow
   const [res, setRes] = useState<PlanResult | null>(null);
   const [planning, setPlanning] = useState(false);
-  const reqKey = form ? JSON.stringify([site, date, form.rooms, form.guests, form.covers, form.bookings]) : "";
+  const reqKey = form ? JSON.stringify([site, date, form.rooms, form.guests, form.covers, form.bookings, scenOn]) : "";
   const [planErr, setPlanErr] = useState("");
   useEffect(() => {
     if (!base || !form) return;
     let on = true;
     setPlanning(true);
     const t = setTimeout(() => {
-      const req = { date, site, rooms: form.rooms, guests: form.guests, covers: form.covers, bookings: form.bookings };
+      const req = { date, site, rooms: form.rooms, guests: form.guests, covers: form.covers, bookings: form.bookings, ...(scenOn ? { temps: scen!.temps } : {}) };
       getPlan(req, { day: day ?? null, temps, cal: idx?.risk ?? null })
         .then((r) => {
           if (!on) return;
@@ -341,14 +354,15 @@ function TomorrowPlan() {
     setChk(undefined);
     if (!past || !res) return;
     let on = true;
+    if (isScenario(saved?.plan?.inputs) || scenOn) { setChk(null); return; }        // a what-if is never checked against the real meters
     const acts = saved?.plan ? checkActions(saved) : actions;
     checkPlan(date, asOf.slice(0, 13) + ":00", acts, saved?.plan ? "saved" : "suggested", site).then((r) => on && setChk(r));
     return () => { on = false; };
   }, [past, site, date, savedSig, saved?.plan ? "" : shownSig, asOf.slice(0, 13)]);
   const chkBy = useMemo(() => Object.fromEntries((chk?.steps ?? []).map((x) => [x.id, x])), [chk]);
   const sig = (xs: { id: string; setting: string; end: string }[]) => xs.map((a) => `${a.id}=${a.setting}@${a.end}`).join(";");
-  const inputsSig = (i: Partial<{ rooms: number; guests: number; covers: number; bookings: Booking[]; notes: string }>) => JSON.stringify([i.rooms, i.guests, i.covers, i.bookings ?? [], i.notes ?? ""]);
-  const dirty = !saved?.plan || sig(saved.plan.actions) !== sig(actions) || (!!form && inputsSig(saved.plan.inputs) !== inputsSig(form));
+  const inputsSig = (i: Partial<{ rooms: number; guests: number; covers: number; bookings: Booking[]; notes: string; weather_mode: string }>) => JSON.stringify([i.rooms, i.guests, i.covers, i.bookings ?? [], i.notes ?? "", i.weather_mode ?? "live"]);
+  const dirty = !saved?.plan || sig(saved.plan.actions) !== sig(actions) || (!!form && inputsSig(saved.plan.inputs) !== inputsSig({ ...form, weather_mode: scenOn ? "scenario-40C" : "live" }));
   const [justSaved, setJustSaved] = useState(false);
   const nameRef = useRef<HTMLInputElement>(null);
   useEffect(() => setJustSaved(false), [date, site]);
@@ -364,14 +378,13 @@ function TomorrowPlan() {
     finally { setBusy(false); }
   }
   const submit = () => form && res && send({ event: "submit", inputs: { rooms: form.rooms, guests: form.guests, covers: form.covers, bookings: form.bookings, notes: form.notes,
-    temps_source: res?.weather ?? "", plan_source: res?.source === "api" ? "plan API" : "offline estimate (browser)" }, actions });
+    temps_source: scenOn ? `SCENARIO: ${scen!.label}` : res?.weather ?? "", plan_source: res?.source === "api" ? "plan API" : "offline estimate (browser)",
+    weather_mode: scenOn ? "scenario-40C" : "live", ...(scenOn ? { scenario_date: scen!.date } : {}) }, actions });
+  const [pendingDecision, setPendingDecision] = useState<{ a: SavedAction; ev: "approve" | "skip" | "edit"; extra: Record<string, string> } | null>(null);
   async function decide(a: SavedAction, ev: "approve" | "skip" | "edit", extra: Record<string, string> = {}) {
     if (!name.trim()) { setErr("Enter your name first: every decision is logged with who made it."); return; }
     setPlannerName(name);
-    if (dirty) {                                     // a decision belongs to a saved plan: ask before saving the unsaved changes
-      if (!window.confirm("You have unsaved changes. Save the bookings and plan first, then " + (ev === "approve" ? "approve" : ev === "skip" ? "skip" : "change") + " this step?")) return;
-      await submit();
-    }
+    if (dirty) { setPendingDecision({ a, ev, extra }); return; }   // a decision belongs to a saved plan: ask in the page before saving
     await send({ event: ev, action_id: a.id, ...extra });
   }
 
@@ -422,7 +435,14 @@ function TomorrowPlan() {
               <span className="small muted">Notes for the duty team</span>
               <textarea rows={2} value={form.notes} onChange={(e) => set("notes", e.target.value)} placeholder="e.g. VIP arrival 15:00, laundry short-staffed" />
             </label>
-            <p className="small muted">Weather: {res ? `${res.weather || "typical temperatures for this date"}, top ${Math.round(Math.max(...res.forecast.temp))} °C` : "checking…"}. Rooms and covers are suggested from the usual pattern for this time of year.</p>
+            {site === "GGN" && scen && (
+              <div className="seg weather-toggle" role="group" aria-label="Weather" style={{ marginTop: 8 }}>
+                <button aria-pressed={!scenOn} onClick={() => setWmode("live")}>Weather: Live forecast</button>
+                <button aria-pressed={scenOn} onClick={() => setWmode("scenario-40C")} data-testid="scenario-40">Scenario: hot May day (40 °C)</button>
+              </div>
+            )}
+            {scenOn && <div className="scenario-banner" role="status" data-testid="scenario-banner"><strong>SCENARIO: hot-day weather ({Math.round(scen!.top_c)} °C), not tomorrow's real forecast.</strong> Uses the {scen!.label}; bookings as entered. A what-if: never in savings, bills or reports.</div>}
+            <p className="small muted">Weather: {res ? `${scenOn ? `SCENARIO: ${scen!.label}` : res.weather || "typical temperatures for this date"}, top ${Math.round(Math.max(...res.forecast.temp))} °C` : "checking…"}. Rooms and covers are suggested from the usual pattern for this time of year.</p>
             <div className="save-row">
               <label className="field name-field">
                 <span className="small muted">Your name (for the log)</span>
@@ -465,11 +485,20 @@ function TomorrowPlan() {
             </div>
           )}
           {err && <div className="guard note-warn" style={{ marginBottom: 10 }}><span aria-hidden>⚠</span><span>{err}</span></div>}
+          {pendingDecision && (
+            <div className="guard note-warn inline-confirm" role="alertdialog" style={{ marginBottom: 10 }}>
+              <span aria-hidden>⚠</span>
+              <span>You have unsaved changes. Save the bookings and plan first, then {pendingDecision.ev === "approve" ? "approve" : pendingDecision.ev === "skip" ? "skip" : "change"} this step?{" "}
+                <button className="btn" disabled={busy} onClick={async () => { const p = pendingDecision; setPendingDecision(null); await submit(); await send({ event: p.ev, action_id: p.a.id, ...p.extra }); }}>Save and continue</button>{" "}
+                <button className="btn ghost" onClick={() => setPendingDecision(null)}>Cancel</button></span>
+            </div>
+          )}
           {saved?.plan && dirty && <p className="small" style={{ color: "var(--coral)", marginTop: 0 }}>The plan has changed since it was saved. Save the bookings and plan (above) before approving steps.</p>}
           <ol className="timeline">
             {actions.map((a) => (
               <Step key={a.id + (saved?.plan?.n ?? 0)} a={a} edit={saved?.edits[a.id]} decision={dirty ? undefined : saved?.decisions[a.id]} canDecide={!!name.trim()} busy={busy}
-                    onDecide={(ev, x) => decide(a, ev, x)} chk={past ? chkBy[a.id] : undefined} changed={changed[a.id]} plant={plantApplied[a.id]} />
+                    onDecide={(ev, x) => decide(a, ev, x)} chk={past ? chkBy[a.id] : undefined} changed={changed[a.id]} plant={plantApplied[a.id]}
+                    duty={dirty ? undefined : saved?.duty[a.id]} onDuty={dirty ? undefined : (ev) => { if (!name.trim()) { setErr("Enter your name first: every report is logged with who made it."); return; } setPlannerName(name); send({ event: ev, action_id: a.id }); }} />
             ))}
           </ol>
           {!name.trim() && <p className="small muted">Enter your name in the bookings card to save, approve, skip or change steps. It is kept on this device.</p>}

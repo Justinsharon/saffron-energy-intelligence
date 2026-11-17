@@ -45,7 +45,8 @@ interface Loaded { day: SimDay; source: string }
 function useSimDay(view: PlantView | null, date: string): { loaded: Loaded | null; err: string } {
   const [loaded, setLoaded] = useState<Loaded | null>(null);
   const [err, setErr] = useState("");
-  const inputs = (view?.plan?.inputs ?? null) as { rooms?: number; guests?: number; covers?: number; bookings?: Booking[]; temps_source?: string } | null;
+  const inputs = (view?.plan?.inputs ?? null) as { rooms?: number; guests?: number; covers?: number; bookings?: Booking[]; temps_source?: string;
+    weather_mode?: string; scenario_date?: string } | null;
   const key = view ? JSON.stringify([date, view.plan?.version ?? 0, inputs]) : "";
   const stepsSig = (view?.plan?.steps ?? []).map((s) => s.id + s.start + s.end).join(";");
   useEffect(() => {
@@ -59,14 +60,17 @@ function useSimDay(view: PlantView | null, date: string): { loaded: Loaded | nul
         const planDay = pd as PlanDay;
         // the SAME request as Tomorrow's plan: the saved inputs; typical temperatures when the plan was saved with them
         const typical = (inputs?.temps_source ?? "").startsWith("typical");
+        // a scenario plan (hot-day what-if) runs on the same real hot-day curve the plan page used
+        const scen = inputs?.weather_mode === "scenario-40C" ? (await fetch("/data/plan/scenario_hot.json").then((r) => r.json())) as { temps: number[]; label: string } : null;
+        const temps = scen ? scen.temps : typical ? planDay.base.temp : null;
         const req = { date, site: "GGN" as const, rooms: inputs?.rooms, guests: inputs?.guests, covers: inputs?.covers, bookings: inputs?.bookings ?? [],
-                      ...(typical ? { temps: planDay.base.temp } : {}) };
+                      ...(temps ? { temps } : {}) };
         let fc: Forecast, bookings: Booking[], source: string;
         try {
           const r = await apiPlan(req, "/api", RETRY_TIMEOUT_MS);
-          fc = r.forecast; bookings = r.bookings; source = `plan API forecast for the saved inputs (weather: ${r.weather})`;
+          fc = r.forecast; bookings = r.bookings; source = `plan API forecast for the saved inputs (weather: ${scen ? `SCENARIO, ${scen.label}` : r.weather})`;
         } catch {
-          const r = planFor(planDay, { rooms: req.rooms, guests: req.guests, covers: req.covers, bookings: req.bookings, temps: typical ? planDay.base.temp : null });
+          const r = planFor(planDay, { rooms: req.rooms, guests: req.guests, covers: req.covers, bookings: req.bookings, temps });
           fc = r.forecast; bookings = req.bookings; source = "offline estimate in the browser (the plan API did not answer)";
         }
         if (on) setLoaded({ day: { date, forecast: fc, steps: (view.plan?.steps ?? []) as SavedAction[], bookings, profile: prof as PlantProfile,
@@ -201,8 +205,10 @@ function Sim({ date, setDate }: { date: string; setDate: (d: string) => void }) 
     if (step && view.applied[step.id] && view.applied[step.id].simHour > tc) return { cls: "", text: `habit until sim ${hhmm(view.applied[step.id].simHour)}` };
     return { cls: "", text: step ? "habit: approved, not done yet" : "habit" };
   };
+  const scenario = (view.plan?.inputs as { weather_mode?: string } | undefined)?.weather_mode === "scenario-40C";
   return (
-    <Shell date={date} t={tc}>
+    <Shell date={date} t={tc} scenario={scenario}>
+      {scenario && <div className="pr-msg warn-banner">SCENARIO: hot-day weather (40 °C) from a real May 2026 day, not the real forecast for {dayLabel(date)}. A what-if: never in savings or bills.</div>}
       <section className="pr-top">
         <div className="pr-panel pr-clock">
           <div className="pr-lbl">Sim clock</div>
@@ -227,7 +233,7 @@ function Sim({ date, setDate }: { date: string; setDate: (d: string) => void }) 
         </div>
         <div className="pr-panel pr-sofar">
           <div className="pr-lbl">What drives these readings</div>
-          <p className="pr-small" style={{ margin: "0 0 6px" }}>{view.plan ? <>Plan v{view.plan.version} for {dayLabel(date)}: <b>{day.steps.length}</b> approved steps, <b data-testid="done-count">{done}</b> marked Done by the duty engineer in the Saffron app.</>
+          <p className="pr-small" style={{ margin: "0 0 6px" }}>{view.plan ? <>Plan v{view.plan.version} for {dayLabel(date)}: <b>{day.steps.length}</b> approved steps, <b data-testid="done-count">{done}</b> marked Done in the Saffron app.</>
             : <>No saved plan for {dayLabel(date)}: every channel follows habit.</>}</p>
           <p className="pr-small muted" style={{ margin: 0 }}>A channel follows habit (last year's matched days) until its approved step is marked Done in the app; then it follows the plan. Nothing here is controlled.</p>
           <p className="pr-small muted" style={{ margin: "6px 0 0" }}>Curves: {loaded?.source}. Reading = curve × (1 ± up to 2.5 %).</p>
@@ -260,14 +266,14 @@ function Sim({ date, setDate }: { date: string; setDate: (d: string) => void }) 
         <FaultPanel faults={faults.map((f) => f.type)} busy={busy} hasAhu={!!ahuStep} t={tc} ahuOff={ahuStep ? ahuStep.end.replace(" (next day)", "") : null}
                     onFault={(type) => act({ event: "fault", type }, `${FAULTS[type].label}: injected at sim ${hhmm(tc)}.`)}
                     onClear={() => act({ event: "clearFault" }, "Fault cleared.")}
-                    onReset={() => { if (window.confirm("Reset the simulation for this day? Faults are removed and Done steps are taken in again from the current sim time (logged).")) act({ event: "reset", reason: "rehearsal reset" }, "Simulation reset."); }} />
+                    onReset={() => act({ event: "reset", reason: "rehearsal reset" }, "Simulation reset.")} />
       </section>
 
       <section className="pr-panel pr-audit">
         <div className="pr-lbl">Audit log · latest 10 · storage: {view.storage === "gist" ? "shared (gist)" : view.storage === "device" ? "this device only" : view.storage}</div>
         <table className="num"><tbody>
-          {view.audit.slice(-10).reverse().map((r, i) => (
-            <tr key={i} className={r.event.includes("fault injected") ? "warn" : r.event.includes("fixed") || r.event.includes("cleared") || r.event.includes("done") ? "okr" : ""}>
+          {view.audit.filter((r) => !r.superseded).slice(-10).reverse().map((r, i) => (
+            <tr key={i} style={r.superseded ? { opacity: 0.45 } : undefined} className={r.event.includes("fault injected") ? "warn" : r.event.includes("fixed") || r.event.includes("cleared") || r.event.includes("done") ? "okr" : ""}>
               <td>{r.at.slice(11)}</td><td>sim {r.simHour !== undefined ? hhmm(r.simHour) : "—"}</td><td>{r.by}</td><td><b>{r.event}</b></td><td>{r.what}{r.why ? ` — ${r.why}` : ""}</td>
             </tr>
           ))}
@@ -278,11 +284,12 @@ function Sim({ date, setDate }: { date: string; setDate: (d: string) => void }) 
   );
 }
 
-function Shell({ date, t, children }: { date: string; t: number; children: React.ReactNode }) {
+function Shell({ date, t, scenario, children }: { date: string; t: number; scenario?: boolean; children: React.ReactNode }) {
   return (
     <div className="pr-shell">
       <header className="pr-head">
         <div className="pr-sim" data-testid="sim-banner"><span className="pr-dot" />SIMULATION · Gurugram · Sim time {dayLabel(date)} {hhmm(t)}</div>
+        {scenario && <div className="pr-sim pr-scen" data-testid="scenario-pill">SIMULATION · SCENARIO 40 °C</div>}
         <div className="pr-brand">Saffron meter simulator <small>stands in for the hotel's meters and BMS points · not live data</small></div>
       </header>
       {children}
@@ -327,6 +334,13 @@ function MeterRows({ rows }: { rows: import("./model").MeterRow[] }) {
   );
 }
 
+/** Two-step button: the first press arms it for 5 s ("Confirm reset"); no browser dialog. */
+function ConfirmButton({ label, confirm, disabled, onConfirm }: { label: string; confirm: string; disabled: boolean; onConfirm: () => void }) {
+  const [armed, setArmed] = useState(false);
+  useEffect(() => { if (!armed) return; const id = setTimeout(() => setArmed(false), 5000); return () => clearTimeout(id); }, [armed]);
+  return <button className={`pr-btn ${armed ? "warn on" : "ghost"}`} disabled={disabled} onClick={() => { if (armed) { setArmed(false); onConfirm(); } else setArmed(true); }}>{armed ? confirm : label}</button>;
+}
+
 function FaultPanel({ faults, busy, hasAhu, t, ahuOff, onFault, onClear, onReset }: { faults: FaultType[]; busy: boolean; hasAhu: boolean; t: number; ahuOff: string | null;
   onFault: (f: FaultType) => void; onClear: () => void; onReset: () => void }) {
   return (
@@ -341,7 +355,7 @@ function FaultPanel({ faults, busy, hasAhu, t, ahuOff, onFault, onClear, onReset
       </div>
       <div className="pr-row wrap">
         <button className="pr-btn" disabled={busy || !faults.length} onClick={onClear}>Clear fault</button>
-        <button className="pr-btn ghost" disabled={busy} onClick={onReset}>Reset simulation</button>
+        <ConfirmButton label="Reset simulation" confirm="Confirm reset" disabled={busy} onConfirm={onReset} />
       </div>
       <div className="pr-small muted" style={{ marginTop: 8 }}>
         {faults.length ? `Active: ${faults.map((f) => FAULTS[f].label).join(", ")}.` : "No fault active."}
