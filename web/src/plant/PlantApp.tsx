@@ -238,17 +238,17 @@ function Sim({ date, setDate }: { date: string; setDate: (d: string) => void }) 
 
       <section className="pr-panel">
         <div className="pr-lbl">Meter channels · live · sim {hhmm(tc)}</div>
-        <table className="pr-chan num" data-testid="channels"><thead><tr><th>Channel</th><th>Meter / BMS point</th><th>Reading</th><th>Today</th><th>Following</th></tr></thead>
-          <tbody>
-            {CHANNELS.map((c) => { const s = sourceOf(c); return (
-              <tr key={c.id} className={c.monitored ? "mon" : c.oos ? "oos" : ""} data-testid={`chan-${c.id.split(" ")[0]}${c.id.endsWith("B") ? "-B" : c.id.endsWith("A") ? "-A" : ""}`}>
-                <td className="pr-cid">{c.id}</td><td>{c.point}</td>
-                <td className="pr-val">{(c.fmt ?? n0)(c.get(snap))} <span className="muted">{c.unit}</span></td>
-                <td><Spark day={day} st={st} t={tc} get={c.get} /></td>
-                <td className={`pr-src ${s.cls}`}>{s.text}</td>
-              </tr>); })}
-          </tbody>
-        </table>
+        <div className="pr-meters" data-testid="channels">
+          {CHANNELS.map((c) => { const s = sourceOf(c); return (
+            <div key={c.id} className={`pr-mtile ${c.monitored ? "mon" : c.oos ? "oos" : ""} src-${s.cls || "habit"}`}
+                 data-testid={`chan-${c.id.split(" ")[0]}${c.id.endsWith("B") ? "-B" : c.id.endsWith("A") ? "-A" : ""}`}>
+              <div className="pr-mname">{c.point.split(" · ")[0]}</div>
+              <div className="pr-cid">{c.id}</div>
+              <div className="pr-mval num">{(c.fmt ?? n0)(c.get(snap))}<span>{c.unit}</span></div>
+              <Spark day={day} st={st} t={tc} get={c.get} />
+              <div className={`pr-src ${s.cls}`}>{s.text}</div>
+            </div>); })}
+        </div>
       </section>
 
       <section className="pr-split">
