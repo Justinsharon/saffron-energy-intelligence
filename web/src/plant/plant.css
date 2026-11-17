@@ -81,3 +81,19 @@ select, input { background: var(--pr-panel-2); border: 1px solid var(--pr-line);
 .pr-foot { padding: 0 4px; }
 @media (max-width: 1100px) { .pr-top { grid-template-columns: 1fr 1fr; } .pr-sofar { grid-column: span 2; } .pr-main { grid-template-columns: 1fr; } }
 @media (max-width: 640px) { .pr-top { grid-template-columns: 1fr; } .pr-sofar { grid-column: auto; } .pr-shell { padding: 10px 12px; } .pr-time { font-size: 34px; } }
+/* meter simulator: channel table and meter rows */
+.pr-chan, .pr-rows { width: 100%; border-collapse: collapse; font-size: 13px; }
+.pr-chan th, .pr-rows th { text-align: left; font-family: "Manrope", sans-serif; font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--pr-text-2); padding: 4px 8px; border-bottom: 1px solid var(--pr-line); }
+.pr-chan td, .pr-rows td { padding: 5px 8px; border-bottom: 1px solid var(--pr-line); vertical-align: middle; }
+.pr-chan td:nth-child(2), .pr-chan td:last-child { font-family: "Manrope", sans-serif; }
+.pr-cid { color: var(--pr-text-2); white-space: nowrap; }
+.pr-val { font-size: 17px; font-weight: 700; white-space: nowrap; text-align: right; }
+.pr-chan .pr-spark { width: 120px; height: 20px; }
+.pr-chan tr.mon td, .pr-chan tr.oos td { color: var(--pr-text-2); }
+.pr-src.plan { color: var(--pr-green); } .pr-src.fault { color: var(--pr-red); font-weight: 800; }
+.pr-rows td { text-align: right; } .pr-rows td:first-child, .pr-rows th:first-child { text-align: left; }
+.pr-split { display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(300px, 1fr); gap: 12px; align-items: start; }
+.pr-split .pr-faults { margin-top: 0; }
+.pr-audit tr.okr td { color: var(--pr-green); }
+@media (max-width: 1100px) { .pr-split { grid-template-columns: 1fr; } .pr-chan td:nth-child(4), .pr-chan th:nth-child(4) { display: none; } }
+@media (max-width: 640px) { .pr-chan td:nth-child(2), .pr-chan th:nth-child(2) { display: none; } }

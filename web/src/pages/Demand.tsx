@@ -16,6 +16,7 @@ import { useHotel } from "../views";
 import { SiteSwitch } from "./Shift";
 import { usePlantApplied } from "../plant/client";
 import type { Applied } from "../plant/model";
+import { hhmm as hhmmSim } from "../plant/store";
 
 // plain names for the "what changed" notes when bookings change the plan
 const PLAIN: Record<string, string> = { chillers: "Chillers", chw: "Chilled water", ahu: "Banquet cooling", laundry: "Laundry", water: "Water heating", ev: "EV charging",
@@ -197,7 +198,7 @@ function Step({ a, edit, decision, canDecide, busy, onDecide, chk, changed, plan
         <div className="guard small"><span aria-hidden>🛡</span><span>{a.guardrail}</span></div>
         {chk && <CheckLine c={chk} />}
         {decision && <div className={`small status ${state}`}>{decision.event === "approve" ? `Approved by ${decision.by} at ${decision.at.slice(11)}` : `Skipped by ${decision.by} at ${decision.at.slice(11)}: ${decision.reason}`}</div>}
-        {plant && decision?.event === "approve" && <div className="small plant-applied" data-testid="plant-applied">{plant.kind === "override" ? `Overridden in plant room ${plant.at.slice(11)} (${plant.value}): ${plant.reason}` : `Applied in plant room ${plant.at.slice(11)}`} · simulation</div>}
+        {plant && decision?.event === "approve" && <div className="small plant-applied" data-testid="plant-applied">{`Done by ${plant.by} at ${plant.at.slice(11)} · meter simulator follows the plan from sim ${hhmmSim(plant.simHour)}`}</div>}
         {canDecide && (
           <div className="btn-row" style={{ marginTop: 8 }}>
             <button className="btn" disabled={busy || state === "ok"} onClick={() => onDecide("approve")}>Approve</button>
@@ -353,7 +354,7 @@ function TomorrowPlan() {
   useEffect(() => setJustSaved(false), [date, site]);
   const save = async () => { setPlannerName(name); await submit(); setJustSaved(true); };
   const approved = actions.filter((a) => saved?.decisions[a.id]?.event === "approve").length;
-  const plantApplied = usePlantApplied(date, site);                // Plant Room simulation: "Applied in plant room hh:mm" per approved step
+  const plantApplied = usePlantApplied(date, site);                // meter simulator: which approved steps its meters follow (Done in the app)
   const set = (k: keyof Form, v: unknown) => form && setForm({ ...form, [k]: v, touched: { ...form.touched, [k]: true } });
 
   async function send(body: Record<string, unknown>) {

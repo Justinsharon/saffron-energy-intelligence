@@ -63,8 +63,9 @@ Full brief, acceptance tests (T1–T10), metrics, schemas, findings and progress
   `gcloud run services update saffron-api --region asia-south1 --min-instances 0 --project saffron-suites`
 - Plant Room (17 Nov, SIMULATION demo screen, Gurugram only): `web/plant.html` + `web/src/plant/*` (second Vite input; served at `/plant` on the main
   site, or at `/` of a second Netlify site built with `SAFFRON_SITE=plant`). Curves: the API forecast for the saved plan's inputs; habit per equipment from
-  the plan's matched days (`tools/export_plant_profiles.py` → `web/public/data/plant/`); reading = curve × (1 ± ≤ 2.5 %). Equipment follows habit until a
-  person presses Apply on an APPROVED step. State + audit in the gist as `plant_state.json` (`web/netlify/functions/plant.ts`, rules in `web/src/plant/store.ts`).
+  the plan's matched days (`tools/export_plant_profiles.py` → `web/public/data/plant/`); reading = curve × (1 ± ≤ 2.5 %). 18 Nov: a meter simulator only (meter channels,
+  meter rows sent, fault demo, audit; no sign-in, no controls). A channel follows habit until its APPROVED step is marked Done by the duty engineer in the app
+  (plans log, taken in by the `sync` event); "Fixed on site" on the app's alert clears a demo fault. State + audit in the gist as `plant_state.json` (`web/netlify/functions/plant.ts`, rules in `web/src/plant/store.ts`).
   `/check` takes an optional additive `meters` (simulated hourly rows; answer has `meters_source: "simulated"`, never cached or counted). The app's Today page
   shows those alerts tagged "From Plant Room simulation" (browser fallback `web/src/plant/check.ts`, a port of `plan_check.check_day`, checked by
   `tests/test_plant_room.py`). Simulated readings never feed savings or bills. E2E: `tools/plant_e2e.mjs`; Cloud Run check: `tools/plant_cloud_check.py`.
