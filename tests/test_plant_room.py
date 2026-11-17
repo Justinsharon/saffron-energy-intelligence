@@ -33,7 +33,8 @@ def run(c):
 def test_unit_checks(run):
     _, out = run
     assert out["unit"] == dict(noise_within_2_5_pct=True, habit_until_apply_then_plan=True, chw_below_6_5_refused=True,
-                               monitored_only_no_actions=True, every_action_audited=True, meters_follow_done_in_app=True,
+                               monitored_only_no_actions=True, every_action_audited=True, meters_follow_done_in_app=True, done_event_read_by_simulator=True,
+                               scenario_and_withdraw_rules=True, alert_cost_arithmetic=True,
                                local_check_matches_expectations=True)
     lo, hi = out["creep_kva"]
     assert hi > lo + 50

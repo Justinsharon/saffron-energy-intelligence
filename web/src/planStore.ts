@@ -1,6 +1,6 @@
 // Browser side of plan storage: the plans function (shared, in the gist) when it is reachable; otherwise this device only, with the
 // same log rules (planlog.ts), and the page says so. The planner's name is entered once and kept on this device.
-import { applyEvent, checkActions, istStamp, planKey, view, type Entry, type PlanView } from "./planlog";
+import { applyEvent, checkActions, isScenario, istStamp, planKey, view, type Entry, type PlanView } from "./planlog";
 import type { PlanSite } from "./plan";
 
 const LOCAL = "plans_local";
@@ -50,7 +50,7 @@ export async function loadMonthPlans(month: string, site: PlanSite = "GGN"): Pro
   const out: Record<string, unknown[]> = {};
   for (const [k, e] of Object.entries(localAll())) {
     const d = k.slice(0, 10);
-    if (d.startsWith(month) && k === planKey(d, site)) { const a = checkActions(view(d, e, "device")); if (a.length) out[d] = a; }
+    if (d.startsWith(month) && k === planKey(d, site)) { const v = view(d, e, "device"); if (isScenario(v.plan?.inputs)) continue; const a = checkActions(v); if (a.length) out[d] = a; }
   }
   return out;
 }

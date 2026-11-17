@@ -8,7 +8,8 @@
 import { FAULTS, isMonitored, overrideError, type ActiveFault, type Applied, type FaultType, type MeterRow } from "./model";
 import type { SavedAction } from "../planlog";
 
-export interface AuditRow { at: string; by: string; event: string; what: string; why?: string; simHour?: number; stepId?: string; value?: string | number }
+export interface AuditRow { at: string; by: string; event: string; what: string; why?: string; simHour?: number; stepId?: string; value?: string | number;
+  superseded?: boolean }                     // kept, but replaced by a later demo reset
 export interface Readings { simHour: number; at: string; kva: number; kw: number; values: Record<string, number | string>; recent: MeterRow[]; lastFix: number | null }
 export interface PlantEntry { applied: Record<string, Applied>; faults: ActiveFault[]; readings: Readings | null; audit: AuditRow[]; lastFix: number | null; updated: string;
   synced?: Record<string, string> }           // step id -> the time of the last plans-log report (done / can't do) already taken into the meters
@@ -20,7 +21,7 @@ export interface PlantView extends PlantEntry { date: string; site: string; exis
 export const empty = (): PlantEntry => ({ applied: {}, faults: [], readings: null, audit: [], lastFix: null, updated: "", synced: {} });
 /** Reports in the plans log the meters have not taken in yet. */
 export const unsynced = (e: PlantEntry, duty: DutyReports | undefined, approved: SavedAction[]) =>
-  approved.filter((a) => duty?.[a.id] && (e.synced ?? {})[a.id] !== duty[a.id].at);
+  approved.filter((a) => (duty?.[a.id] ? (e.synced ?? {})[a.id] !== duty[a.id].at : !!(e.synced ?? {})[a.id]));
 export const AUDIT_KEEP = 500;
 const simHourOf = (x: unknown) => { const v = Number(x); return Number.isFinite(v) && v >= 0 && v <= 24 ? Math.round(v * 100) / 100 : null; };
 export const hhmm = (t: number) => `${String(Math.floor(t)).padStart(2, "0")}:${String(Math.floor((t % 1) * 60 + 1e-6)).padStart(2, "0")}`;
@@ -42,12 +43,17 @@ export function applyPlantEvent(entry: PlantEntry | undefined, body: Record<stri
     // clicked Done is the one in the log; the meter simulator only takes the report in.
     const t0 = simHourOf(body.simHour) ?? 0;
     for (const a of unsynced(e, duty, approved)) {
-      const r = duty![a.id];
+      const r = duty?.[a.id];
+      if (!r) {                                               // the Done was undone in the app: back to habit from now
+        delete e.synced![a.id]; delete e.applied[a.id]; e.lastFix = t0;
+        e.audit.push({ at, by: "Saffron app", event: "done undone", what: `${label(a)}: meters back on habit from sim ${hhmm(t0)}`, simHour: t0, stepId: a.id });
+        continue;
+      }
       e.synced![a.id] = r.at;
       if (r.event === "done") {
         e.applied[a.id] = { stepId: a.id, kind: "apply", by: r.by, at: r.at, simHour: t0 };
         e.lastFix = t0;                                       // a change on the floor: the plan check starts again from here
-        e.audit.push({ at, by: r.by, event: "done in app", what: `${label(a)}: meters follow the plan from sim ${hhmm(t0)}`, why: `reported ${r.at.slice(11)}`, simHour: t0, stepId: a.id });
+        e.audit.push({ at, by: r.by, event: "step marked done", what: `${label(a)}: meters follow the plan from sim ${hhmm(t0)}`, why: `reported ${r.at.slice(11)}`, simHour: t0, stepId: a.id });
         for (const f of activeFaults(e).filter((f) => FAULTS[f.type].fixGroup === a.group && r.at >= f.at)) {
           f.fixedAt = t0; f.fixedBy = r.by; e.lastFix = t0;
           e.audit.push({ at, by: r.by, event: "fault fixed", what: FAULTS[f.type].label, why: "step done again in the app", simHour: t0, stepId: a.id });
@@ -101,6 +107,12 @@ export function applyPlantEvent(entry: PlantEntry | undefined, body: Record<stri
     for (const f of act) { f.fixedAt = t; f.fixedBy = by; }
     log({ event: "fault cleared", what: act.map((f) => FAULTS[f.type].label).join(", "), simHour: t });
     e.lastFix = t;
+  } else if (ev === "demoReset") {
+    // presenter cleanup (tools/demo_reset.mjs): faults, readings and taken-in Done steps cleared; the audit log is kept, marked superseded
+    e.audit = e.audit.map((r) => ({ ...r, superseded: true }));
+    e.applied = {}; e.faults = []; e.readings = null; e.lastFix = null; e.synced = {};
+    log({ event: "demo reset", what: "Demo state cleared (fault, readings, Done steps); earlier rows kept as superseded", why: String(body.reason ?? "") || undefined, simHour: t });
+    return { entry: e };
   } else if (ev === "reset") {
     const reason = String(body.reason ?? "").trim().slice(0, 300);
     e.applied = {}; e.faults = []; e.readings = null; e.lastFix = null; e.synced = {};

@@ -79,6 +79,15 @@ def main():
             out[k] = r(np.mean([g[c].to_numpy() for g in days], axis=0))
         (OUT / f"{date}.json").write_text(json.dumps(out, separators=(",", ":")), encoding="utf-8")
         n += 1
+    # the hot-day scenario for the plan page: a REAL hourly temperature curve (the May 2026 Gurugram day whose top is closest to 40 °C)
+    w = pd.read_parquet(CLEAN / "weather_hourly.parquet").query("site == 'GGN'").copy()
+    w["d"] = w.timestamp.dt.strftime("%Y-%m-%d")
+    may = w[w.d.str.startswith("2026-05")]
+    hot = (may.groupby("d").temp_c.max() - 40).abs().idxmin()
+    temps = r(may[may.d == hot].sort_values("timestamp").temp_c, 1)
+    (ROOT / "web" / "public" / "data" / "plan" / "scenario_hot.json").write_text(json.dumps(dict(
+        id="scenario-40C", date=hot, top_c=max(temps), temps=temps,
+        label=f"temperature curve of {pd.Timestamp(hot).strftime('%a %-d %b %Y')} (Gurugram weather log)")), encoding="utf-8")
     print(f"wrote {n} days + index.json to {OUT.relative_to(ROOT)}; AHU event kW {ahu_event_kw}, CH-1 share when both run {ch1_share_both:.2f}")
 
 

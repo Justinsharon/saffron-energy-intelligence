@@ -3,10 +3,13 @@
 // Entries are only ever appended: a submitted plan is a new version, and every approve / skip / edit is a log row with who and when.
 import { validate, type Action, type Booking } from "./plan";
 
-export interface PlanInputs { rooms: number; guests: number; covers: number; bookings: Booking[]; notes: string; temps_source: string }
+export interface PlanInputs { rooms: number; guests: number; covers: number; bookings: Booking[]; notes: string; temps_source: string;
+  weather_mode?: "live" | "scenario-40C"; scenario_date?: string }   // a scenario plan is a what-if: never in savings, bills or reports
+/** Plans that count anywhere (plan savings, adherence, monthly report): not withdrawn, not a weather scenario. */
+export const isScenario = (i: PlanInputs | undefined | null) => !!i?.weather_mode && i.weather_mode !== "live";
 export interface SavedAction extends Action { id: string }
 export interface Version { n: number; at: string; by: string; inputs: PlanInputs; actions: SavedAction[]; total_inr: number }
-export interface LogRow { at: string; by: string; event: "submit" | "approve" | "skip" | "edit" | "done" | "cant"; version?: number; action_id?: string; reason?: string; start?: string; end?: string }
+export interface LogRow { at: string; by: string; event: "submit" | "approve" | "skip" | "edit" | "done" | "cant" | "undone" | "withdraw"; version?: number; action_id?: string; reason?: string; start?: string; end?: string }
 export interface Entry { versions: Version[]; log: LogRow[] }
 export interface PlanView { date: string; storage: "gist" | "device"; plan: Version | null; decisions: Record<string, LogRow>;
   duty: Record<string, LogRow>;                         // the duty engineer's latest "done" / "can't do" per approved step (never changes the approval)
@@ -36,13 +39,21 @@ export function applyEvent(entry: Entry | undefined, body: Record<string, any>, 
     e.log.push({ at, by, event: "submit", version: n });
     return e;
   }
-  if (!["approve", "skip", "edit", "done", "cant"].includes(ev)) throw new Error("Unknown event.");
+  if (ev === "withdraw") {
+    // presenter cleanup (tools/demo_reset.mjs): only a TEST plan can be withdrawn; nothing is deleted, the log keeps every row
+    const v0 = e.versions.at(-1);
+    if (!v0) throw new Error("No plan to withdraw.");
+    if (!/^TEST/i.test(v0.by)) throw new Error("Only plans saved by a TEST name can be withdrawn.");
+    e.log.push({ at, by, event: "withdraw", version: v0.n, reason: String(body.reason ?? "demo reset").slice(0, 300) });
+    return e;
+  }
+  if (!["approve", "skip", "edit", "done", "cant", "undone"].includes(ev)) throw new Error("Unknown event.");
   const v = e.versions.at(-1);
   if (!v) throw new Error("Save the plan before approving or skipping actions.");
   const a = v.actions.find((x) => x.id === body.action_id);
   if (!a) throw new Error("That action is not in the saved plan; save the updated plan first.");
   const row: LogRow = { at, by, event: ev, version: v.n, action_id: a.id };
-  if (ev === "done" || ev === "cant") {
+  if (ev === "done" || ev === "cant" || ev === "undone") {
     // the duty engineer reports on a step the chief engineer approved; a step that was never approved is not theirs to act on
     const last = [...e.log].reverse().find((r) => r.version === v.n && r.action_id === a.id && (r.event === "approve" || r.event === "skip"));
     if (last?.event !== "approve") throw new Error("Only approved steps can be marked done or can't do.");
@@ -72,12 +83,15 @@ export function applyEvent(entry: Entry | undefined, body: Record<string, any>, 
 
 /** What the page shows: the latest version, each action's latest approve/skip, and its latest edited time (for that version). */
 export function view(date: string, entry: Entry | undefined, storage: PlanView["storage"]): PlanView {
-  const plan = entry?.versions.at(-1) ?? null;
+  const last = entry?.versions.at(-1) ?? null;
+  const withdrawn = !!last && (entry?.log ?? []).some((r) => r.event === "withdraw" && r.version === last.n);
+  const plan = withdrawn ? null : last;
   const decisions: PlanView["decisions"] = {}, edits: PlanView["edits"] = {}, duty: PlanView["duty"] = {};
   for (const r of entry?.log ?? []) {
     if (!plan || r.version !== plan.n || !r.action_id) continue;
     if (r.event === "approve" || r.event === "skip") decisions[r.action_id] = r;
     if (r.event === "done" || r.event === "cant") duty[r.action_id] = r;
+    if (r.event === "undone") delete duty[r.action_id];
     if (r.event === "edit" && r.start && r.end) edits[r.action_id] = { start: r.start, end: r.end, by: r.by, at: r.at, reason: r.reason };
   }
   return { date, storage, plan, decisions, duty, edits, log: entry?.log ?? [] };
