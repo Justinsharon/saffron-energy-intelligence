@@ -9,6 +9,7 @@ import Rate from "./pages/Rate";
 import Method from "./pages/Method";
 import Report from "./pages/Report";
 import { Attention, DutyToday } from "./pages/Duty";
+import PlantAlerts from "./plant/PlantAlerts";
 import Overview from "./pages/Overview";
 import SavingsPage from "./pages/Savings";
 import { BillCheck } from "./pages/Finance";
@@ -134,6 +135,7 @@ export default function App() {
         {page === "today" && view !== "duty" && <TodayHero />}
         <div className="content">
           <main>
+            {page === "today" && <PlantAlerts />}
             {page === "today" && (view === "duty" ? <DutyToday /> : <Shift />)}
             {page === "attention" && <Attention />}
             {page === "overview" && <Overview />}

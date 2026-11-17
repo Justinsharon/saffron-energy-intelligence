@@ -1,0 +1,24 @@
+{
+ "source": "Mean of the matched days' sub-meter readings (models/refs.json matched_days; original year Oct 2025 - Sep 2026). Not refitted.",
+ "ahu_event_kw": {
+  "A": 47.5,
+  "B": 48.6,
+  "A+B": 63.0
+ },
+ "ahu_event_hours": {
+  "A": 738,
+  "B": 369,
+  "A+B": 264
+ },
+ "ahu_idle_kw": 0.0,
+ "ch1_share_both": 0.553,
+ "chw_supply_offset_c": 0.3,
+ "laundry_connected_kw": 95.0,
+ "water_connected_kw": 80.0,
+ "ahu_rated_kw": {
+  "A": 45.0,
+  "B": 45.0,
+  "A+B": 90.0
+ },
+ "note": "Connected / rated kW from the equipment register (data/clean/equipment_register.parquet). Return water temperature is not metered."
+}

@@ -1,0 +1,10 @@
+http://127.0.0.1:8001
+/plan 2026-11-19: 9 steps, weather: Open-Meteo hourly forecast (110 ms)
+  PASS       9 ms  0 all steps applied, no fault (after event): no alert
+  PASS       9 ms  1 banquet AHU left on after event: Plan said banquet AHUs off at 19:00; they ran 19:00–21:00
+  PASS       6 ms  1 fixed by Apply on the AHU off step: no alert
+  PASS       7 ms  2 CHW set to 5.5 °C after a complaint: Plan said chilled water 7.0 °C until 16:00; it was set colder from 13:00
+  PASS       4 ms  2 cleared: no alert
+  PASS       6 ms  3 peak creep: laundry + AHU in 18–22: Plan said no laundry in the 18:00–22:00 peak; it ran from 18:00
+  PASS       5 ms  3 cleared: no alert
+all pass
