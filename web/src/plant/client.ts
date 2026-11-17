@@ -18,7 +18,7 @@ const localSave = (a: Record<string, PlantEntry>) => { try { localStorage.setIte
 
 async function deviceView(date: string): Promise<PlantView> {
   const v = await loadPlan(date, "GGN").catch(() => null);
-  const plan = v?.plan ? { version: v.plan.n, by: v.plan.by, at: v.plan.at, inputs: v.plan.inputs, steps: checkActions(v).filter((a) => a.decision === "approve") } : null;
+  const plan = v?.plan ? { version: v.plan.n, by: v.plan.by, at: v.plan.at, inputs: v.plan.inputs, steps: checkActions(v).filter((a) => a.decision === "approve"), duty: v.duty } : null;
   const e = localAll()[plantKey(date)];
   return { date, site: "GGN", exists: !!e && (e.audit.length > 0 || !!e.readings), storage: "device", plan, ...(e ?? empty()) };
 }
@@ -56,7 +56,7 @@ export async function postPlant(body: Record<string, unknown>): Promise<{ view: 
   const date = String(body.date);
   const v = await deviceView(date);
   const all = localAll();
-  const res = applyPlantEvent(all[plantKey(date)], body, istStamp(), (v.plan?.steps ?? []) as SavedAction[]);
+  const res = applyPlantEvent(all[plantKey(date)], body, istStamp(), (v.plan?.steps ?? []) as SavedAction[], v.plan?.duty);
   all[plantKey(date)] = res.entry; localSave(all);
   return { view: { ...v, ...res.entry, exists: true }, error: res.error };
 }

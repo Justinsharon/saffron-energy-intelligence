@@ -1,6 +1,6 @@
 // Plant Room (simulation) shared state: GET /.netlify/functions/plant?date=YYYY-MM-DD&site=GGN returns the day's approved plan (from the
 // plans log), the steps applied in the Plant Room, the active / fixed demo faults, the latest readings snapshot and the audit log.
-// POST {date, site, event: apply | override | fault | clearFault | readings | reset, by, simHour, ...} records one event (web/src/plant/store.ts).
+// POST {date, site, event: sync (take in Done / Can't do from the plans log) | fault | clearFault | readings | reset, by, simHour, ...} records one event (web/src/plant/store.ts).
 // Stored in the same private gist as the plans, as plant_state.json: { "<date>@GGN": {...} }. SIMULATION ONLY: nothing here controls
 // equipment, and simulated readings never feed savings, bills or the live feed.
 import { configured, readFiles, writeJSON } from "../lib/gist";
@@ -18,7 +18,7 @@ async function both() {
 function approvedPlan(plans: Record<string, Entry>, date: string) {
   const v = view(date, plans[planKey(date, "GGN")], "gist");
   if (!v.plan) return null;
-  return { version: v.plan.n, by: v.plan.by, at: v.plan.at, inputs: v.plan.inputs, steps: checkActions(v).filter((a) => a.decision === "approve") };
+  return { version: v.plan.n, by: v.plan.by, at: v.plan.at, inputs: v.plan.inputs, steps: checkActions(v).filter((a) => a.decision === "approve"), duty: v.duty };
 }
 
 function out(date: string, e: PlantEntry | undefined, plan: PlantView["plan"]): PlantView {
@@ -47,7 +47,7 @@ export default async (req: Request) => {
     const { all, plans } = await both();
     const plan = approvedPlan(plans, b.date);
     const key = plantKey(b.date);
-    const r = applyPlantEvent(all[key], b, istStamp(), plan?.steps ?? []);
+    const r = applyPlantEvent(all[key], b, istStamp(), plan?.steps ?? [], plan?.duty);
     if (r.entry !== all[key]) { all[key] = r.entry; await writeJSON(FILE, all); }
     const body = out(b.date, all[key], plan);
     return r.error ? Response.json({ ...body, error: r.error }, { status: 400 }) : Response.json(body);

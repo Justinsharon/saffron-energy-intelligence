@@ -10,11 +10,17 @@ import type { SavedAction } from "../planlog";
 
 export interface AuditRow { at: string; by: string; event: string; what: string; why?: string; simHour?: number; stepId?: string; value?: string | number }
 export interface Readings { simHour: number; at: string; kva: number; kw: number; values: Record<string, number | string>; recent: MeterRow[]; lastFix: number | null }
-export interface PlantEntry { applied: Record<string, Applied>; faults: ActiveFault[]; readings: Readings | null; audit: AuditRow[]; lastFix: number | null; updated: string }
+export interface PlantEntry { applied: Record<string, Applied>; faults: ActiveFault[]; readings: Readings | null; audit: AuditRow[]; lastFix: number | null; updated: string;
+  synced?: Record<string, string> }           // step id -> the time of the last plans-log report (done / can't do) already taken into the meters
+/** The duty engineer's latest report per approved step, from the plans log (planlog.view().duty). */
+export type DutyReports = Record<string, { event: string; by: string; at: string; reason?: string }>;
 export interface PlantView extends PlantEntry { date: string; site: string; exists: boolean; storage: string;
-  plan: { version: number; by: string; at: string; inputs: unknown; steps: (SavedAction & { decision?: string; decision_reason?: string })[] } | null }
+  plan: { version: number; by: string; at: string; inputs: unknown; steps: (SavedAction & { decision?: string; decision_reason?: string })[]; duty?: DutyReports } | null }
 
-export const empty = (): PlantEntry => ({ applied: {}, faults: [], readings: null, audit: [], lastFix: null, updated: "" });
+export const empty = (): PlantEntry => ({ applied: {}, faults: [], readings: null, audit: [], lastFix: null, updated: "", synced: {} });
+/** Reports in the plans log the meters have not taken in yet. */
+export const unsynced = (e: PlantEntry, duty: DutyReports | undefined, approved: SavedAction[]) =>
+  approved.filter((a) => duty?.[a.id] && (e.synced ?? {})[a.id] !== duty[a.id].at);
 export const AUDIT_KEEP = 500;
 const simHourOf = (x: unknown) => { const v = Number(x); return Number.isFinite(v) && v >= 0 && v <= 24 ? Math.round(v * 100) / 100 : null; };
 export const hhmm = (t: number) => `${String(Math.floor(t)).padStart(2, "0")}:${String(Math.floor((t % 1) * 60 + 1e-6)).padStart(2, "0")}`;
@@ -22,8 +28,8 @@ const label = (a: SavedAction) => `${a.equipment}: ${a.setting} (${a.start.repla
 export const activeFaults = (e: PlantEntry) => e.faults.filter((f) => f.fixedAt === undefined);
 
 /** Apply one event. Returns the new entry, and `error` when the event was refused (a refused override is still logged). */
-export function applyPlantEvent(entry: PlantEntry | undefined, body: Record<string, any>, at: string, approved: SavedAction[]): { entry: PlantEntry; error?: string } {
-  const e: PlantEntry = entry ? { ...entry, applied: { ...entry.applied }, faults: entry.faults.map((f) => ({ ...f })), audit: [...entry.audit] } : empty();
+export function applyPlantEvent(entry: PlantEntry | undefined, body: Record<string, any>, at: string, approved: SavedAction[], duty?: DutyReports): { entry: PlantEntry; error?: string } {
+  const e: PlantEntry = entry ? { ...entry, applied: { ...entry.applied }, faults: entry.faults.map((f) => ({ ...f })), audit: [...entry.audit], synced: { ...(entry.synced ?? {}) } } : empty();
   e.updated = at;
   const by = String(body.by ?? "").trim().slice(0, 80);
   const ev = String(body.event ?? "");
@@ -31,6 +37,30 @@ export function applyPlantEvent(entry: PlantEntry | undefined, body: Record<stri
   const log = (row: Omit<AuditRow, "at" | "by">) => { e.audit.push({ at, by, ...row }); if (e.audit.length > AUDIT_KEEP) e.audit = e.audit.slice(-AUDIT_KEEP); };
   const withReadings = () => { if (body.readings && typeof body.readings === "object") e.readings = sanitizeReadings(body.readings, at); };
   if (ev === "readings") { withReadings(); return { entry: e }; }
+  if (ev === "sync") {
+    // the duty engineer marked steps Done (or Can't do) in the Saffron app: from this sim time the equipment follows the plan. The person who
+    // clicked Done is the one in the log; the meter simulator only takes the report in.
+    const t0 = simHourOf(body.simHour) ?? 0;
+    for (const a of unsynced(e, duty, approved)) {
+      const r = duty![a.id];
+      e.synced![a.id] = r.at;
+      if (r.event === "done") {
+        e.applied[a.id] = { stepId: a.id, kind: "apply", by: r.by, at: r.at, simHour: t0 };
+        e.lastFix = t0;                                       // a change on the floor: the plan check starts again from here
+        e.audit.push({ at, by: r.by, event: "done in app", what: `${label(a)}: meters follow the plan from sim ${hhmm(t0)}`, why: `reported ${r.at.slice(11)}`, simHour: t0, stepId: a.id });
+        for (const f of activeFaults(e).filter((f) => FAULTS[f.type].fixGroup === a.group && r.at >= f.at)) {
+          f.fixedAt = t0; f.fixedBy = r.by; e.lastFix = t0;
+          e.audit.push({ at, by: r.by, event: "fault fixed", what: FAULTS[f.type].label, why: "step done again in the app", simHour: t0, stepId: a.id });
+        }
+      } else {
+        delete e.applied[a.id];
+        e.audit.push({ at, by: r.by, event: "can't do (app)", what: `${label(a)}: meters stay on habit`, why: r.reason, simHour: t0, stepId: a.id });
+      }
+    }
+    if (e.audit.length > AUDIT_KEEP) e.audit = e.audit.slice(-AUDIT_KEEP);
+    withReadings();
+    return { entry: e };
+  }
   if (!by) return { entry: entry ?? empty(), error: "Pick who you are first (Signed in as): every action is logged with a name." };
   if (t === null) return { entry: entry ?? empty(), error: "simHour must be a number of hours from 0 to 24." };
 
@@ -73,7 +103,7 @@ export function applyPlantEvent(entry: PlantEntry | undefined, body: Record<stri
     e.lastFix = t;
   } else if (ev === "reset") {
     const reason = String(body.reason ?? "").trim().slice(0, 300);
-    e.applied = {}; e.faults = []; e.readings = null; e.lastFix = null;
+    e.applied = {}; e.faults = []; e.readings = null; e.lastFix = null; e.synced = {};
     log({ event: "reset", what: "Simulation reset: all equipment back to habit, faults removed", why: reason || undefined, simHour: t });
     return { entry: e };
   } else {

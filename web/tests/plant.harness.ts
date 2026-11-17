@@ -75,8 +75,26 @@ assert.equal(e.audit.length, steps.length + 2);
 assert.ok(e.audit.every((r) => r.by === BY && r.at && r.event && r.what));
 unit.every_action_audited = true;
 
+// 6. the meters move only when the duty engineer marks a step Done in the app (plans log), taken in at the current sim time
+const doneAll = Object.fromEntries(steps.map((s: any) => [s.id, { event: "done", by: "Rahul", at: "2026-11-18 09:00" }]));
+let sy = applyPlantEvent(empty(), { event: "sync", simHour: 6 }, at(), steps, doneAll).entry;
+assert.equal(Object.keys(sy.applied).length, steps.length);
+assert.ok(Object.values(sy.applied).every((a) => a.simHour === 6 && a.by === "Rahul"));
+assert.equal(applyPlantEvent(sy, { event: "sync", simHour: 9 }, at(), steps, doneAll).entry.audit.length, sy.audit.length, "a report is taken in once");
+const cant = { ...doneAll, [chw.id]: { event: "cant", by: "Rahul", at: "2026-11-18 09:05", reason: "guest complaint" } };
+sy = applyPlantEvent(sy, { event: "sync", simHour: 7 }, at(), steps, cant).entry;
+assert.equal(sy.applied[chw.id], undefined, "Can't do: back on habit");
+assert.equal(snapshot(day, sim(sy), h + 0.5, false).setpoint, 7.0);
+const approvedOnly = applyPlantEvent(empty(), { event: "sync", simHour: 6 }, at(), steps, {}).entry;
+assert.equal(Object.keys(approvedOnly.applied).length, 0, "approved but not done: habit");
+let fx = ev(applyPlantEvent(empty(), { event: "sync", simHour: 6 }, at(), steps, doneAll).entry, { event: "fault", type: "chw_low", simHour: 13 }).entry;
+const later = { ...doneAll, [chw.id]: { event: "done", by: "Rahul", at: "2026-11-18 23:59" } };
+fx = applyPlantEvent(fx, { event: "sync", simHour: 14 }, at(), steps, later).entry;
+assert.ok(fx.faults.every((f) => f.fixedAt !== undefined) || !steps.some((s: any) => s.id === chw.id), "Done after the fault fixes it");
+unit.meters_follow_done_in_app = true;
+
 // ---- fault scenarios: what the app sends to /check ----
-const allApplied = () => { let x = empty(); for (const s of steps) x = ev(x, { event: "apply", stepId: s.id, simHour: 6 }).entry; return x; };
+const allApplied = () => applyPlantEvent(empty(), { event: "sync", simHour: 6 }, at(), steps, doneAll).entry;
 const ahu = steps.find((s: any) => s.group === "ahu");
 const off = Number(ahu.end.slice(0, 2)) + (ahu.end.includes("next day") ? 24 : 0);
 const scenarios: any[] = [];
@@ -90,9 +108,9 @@ let s1 = allApplied();
 emit("0 all steps applied, no fault (after event)", s1, off + 1, false);
 s1 = ev(s1, { event: "fault", type: "ahu_left_on", simHour: off + 1 }).entry;
 emit("1 banquet AHU left on after event", s1, off + 1, true, "ahu");
-const fixed = ev(s1, { event: "apply", stepId: ahu.id, simHour: off + 1.2 });
-assert.equal(fixed.entry.faults[0].fixedAt, off + 1.2, "Apply on the AHU step fixes fault 1");
-emit("1 fixed by Apply on the AHU off step", fixed.entry, off + 1.3, false);
+const fixed = applyPlantEvent(s1, { event: "clearFault", by: "Rahul", simHour: off + 1.2 }, at(), steps);     // "Fixed on site" in the app
+assert.equal(fixed.entry.faults[0].fixedAt, off + 1.2, "Fixed on site clears fault 1");
+emit("1 fixed on site (duty engineer)", fixed.entry, off + 1.3, false);
 let s2 = ev(allApplied(), { event: "fault", type: "chw_low", simHour: 13 }).entry;       // during the conference (one setpoint block)
 emit("2 CHW set to 5.5 °C after a complaint", s2, 14.2, true, "chw");
 s2 = ev(s2, { event: "clearFault", simHour: 14.4 }).entry;

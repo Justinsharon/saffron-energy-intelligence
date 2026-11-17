@@ -1,4 +1,4 @@
-# Plant Room demo checks (17 Nov 2026)
+# Meter simulator (Plant Room) demo checks (updated 18 Nov 2026: approve → Done in the app → meters follow → fault → alert → Fixed on site)
 
 Screenshots from `tools/plant_e2e.mjs` (headless Playwright, 1440×900 @2x), API path (dev server, `/api` → local uvicorn running this branch's `api/main.py`):
 
