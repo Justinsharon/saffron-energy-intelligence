@@ -24,7 +24,7 @@ export interface PlanResult {
   timed_out?: boolean;                 // offline because the API was slow (not unreachable): worth one background retry
 }
 
-export const API_TIMEOUT_MS = 4000;
+export const API_TIMEOUT_MS = 8000;      // the live API with the weather lookup can take 2–4 s; 8 s avoids an offline estimate being swapped out after a save
 export const RETRY_TIMEOUT_MS = 15000;   // one background retry after a timeout: a cold Cloud Run start can take longer than 4 s
 
 export async function apiPlan(req: PlanRequest, base = "/api", timeoutMs = API_TIMEOUT_MS): Promise<PlanResult> {
@@ -63,7 +63,7 @@ export async function getPlan(req: PlanRequest, offline: { day: PlanDay | null; 
   } catch (e) {
     const err = e as Error & { status?: number };
     if (!offline.day || (req.site ?? "GGN") !== "GGN") throw err;              // Jaipur / Goa: no offline estimate
-    const why = err.name === "AbortError" ? "The planning service did not answer within 4 seconds, so this is an offline estimate worked out in your browser. Trying the service again in the background."
+    const why = err.name === "AbortError" ? "The planning service did not answer within 8 seconds, so this is an offline estimate worked out in your browser. Trying the service again in the background."
       : err.status === 422 ? `The planning service could not plan this: ${err.message}`
       : "The planning service could not be reached, so this is an offline estimate worked out in your browser.";
     return { ...offlinePlan(offline.day, req, offline.temps, offline.cal, why), timed_out: err.name === "AbortError" };
