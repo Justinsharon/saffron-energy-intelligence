@@ -17,3 +17,9 @@ cd web && SAFFRON_DEV_FUNCTIONS=1 SAFFRON_MEMORY_STORE=1 SAFFRON_API_URL=http://
 node tools/plant_e2e.mjs
 uv run python tools/plant_cloud_check.py            # against Cloud Run (after redeploy)
 ```
+
+## Live-weather demo check (18 Nov 2026)
+`node tools/plant_e2e_live.mjs [base URL]` (screenshots to `live_weather/`): plan for tomorrow on the Open-Meteo forecast, Hall A 09:00–18:00
+300 guests, approve all, Mark done on AHU / chiller / CHW steps, fault 1 at 20:00, Fixed on site, then `tools/demo_reset.mjs`.
+Local run against the Cloud Run API passed: simulator follows Done in 1.8 s; AHU alert in 2.1 s (₹9,245 a day, ₹770 so far over 2 h,
+₹385 an hour); cleared 5.8 s after Fixed on site; reset leaves no plan, fault or alert.
