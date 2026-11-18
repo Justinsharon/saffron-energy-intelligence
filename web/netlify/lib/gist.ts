@@ -9,11 +9,10 @@ const gistReady = () => !!process.env.GITHUB_TOKEN && !!gistId();
 // The plan log and the meter simulator's state live in Netlify Blobs (store "saffron"; no GitHub rate limit). The gist stays a READ-ONLY
 // fallback: a file not yet in Blobs is read from the gist once, and the first write puts it in Blobs. Other files (ratings) stay in the gist.
 const BLOB_FILES = new Set(["plans.json", "plant_state.json"]);
-let blobStore: Store | null | undefined;
+// A new store handle on every call: the Blobs token comes with each invocation and expires, so a handle kept in a warm function
+// instance fails later with "Token expired". getStore is cheap (no network); the try/catch covers local dev (no Blobs environment).
 function blobs(): Store | null {
-  if (blobStore !== undefined) return blobStore;
-  try { blobStore = getStore({ name: "saffron", consistency: "strong" }); } catch { blobStore = null; }   // not on Netlify (local dev)
-  return blobStore;
+  try { return getStore({ name: "saffron", consistency: "strong" }); } catch { return null; }
 }
 const etags = new Map<string, string | null>();      // last read version per file, so a write only lands on what was read (else retried)
 export const configured = () => !!MEM || !!blobs() || gistReady();
