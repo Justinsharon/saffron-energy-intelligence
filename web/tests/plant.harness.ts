@@ -117,6 +117,9 @@ assert.ok(isScenario({ weather_mode: "scenario-40C" } as any) && !isScenario({ w
 assert.equal(view(inp.date, applyEvent(log, { event: "withdraw", by: "demo reset" }, "x"), "gist").plan, null);
 const real = applyEvent(undefined, { event: "submit", by: "Meera", site: "GGN", inputs: {}, actions: steps.map(({ decision, ...a }: any) => a) }, "x");
 assert.throws(() => applyEvent(real, { event: "withdraw", by: "demo reset" }, "y"), /TEST/);
+const sc = applyEvent(undefined, { event: "submit", by: "Meera", site: "GGN", inputs: { weather_mode: "scenario-40C" }, actions: steps.map(({ decision, ...a }: any) => a) }, "x");
+assert.equal(view(inp.date, applyEvent(sc, { event: "supersede", by: "demo reset" }, "y"), "gist").plan, null, "a scenario plan can be superseded");
+assert.throws(() => applyEvent(real, { event: "supersede", by: "demo reset" }, "y"), /scenario/);
 unit.scenario_and_withdraw_rules = true;
 
 // ---- fault scenarios: what the app sends to /check ----

@@ -9,7 +9,7 @@ export interface PlanInputs { rooms: number; guests: number; covers: number; boo
 export const isScenario = (i: PlanInputs | undefined | null) => !!i?.weather_mode && i.weather_mode !== "live";
 export interface SavedAction extends Action { id: string }
 export interface Version { n: number; at: string; by: string; inputs: PlanInputs; actions: SavedAction[]; total_inr: number }
-export interface LogRow { at: string; by: string; event: "submit" | "approve" | "skip" | "edit" | "done" | "cant" | "undone" | "withdraw"; version?: number; action_id?: string; reason?: string; start?: string; end?: string }
+export interface LogRow { at: string; by: string; event: "submit" | "approve" | "skip" | "edit" | "done" | "cant" | "undone" | "withdraw" | "supersede"; version?: number; action_id?: string; reason?: string; start?: string; end?: string }
 export interface Entry { versions: Version[]; log: LogRow[] }
 export interface PlanView { date: string; storage: "gist" | "device"; plan: Version | null; decisions: Record<string, LogRow>;
   duty: Record<string, LogRow>;                         // the duty engineer's latest "done" / "can't do" per approved step (never changes the approval)
@@ -37,6 +37,14 @@ export function applyEvent(entry: Entry | undefined, body: Record<string, any>, 
     const total = actions.reduce((s, a) => s + (Number(a.saving_inr) || 0), 0);
     e.versions.push({ n, at, by, inputs: body.inputs, actions, total_inr: total });
     e.log.push({ at, by, event: "submit", version: n });
+    return e;
+  }
+  if (ev === "supersede") {
+    // the demo runs on the live forecast: a saved weather-scenario plan is set aside (kept in the log, ignored by Today and the simulator)
+    const v0 = e.versions.at(-1);
+    if (!v0) throw new Error("No plan to supersede.");
+    if (!isScenario(v0.inputs)) throw new Error("Only weather-scenario plans can be superseded this way.");
+    e.log.push({ at, by, event: "supersede", version: v0.n, reason: String(body.reason ?? "scenario plan superseded").slice(0, 300) });
     return e;
   }
   if (ev === "withdraw") {
@@ -84,7 +92,7 @@ export function applyEvent(entry: Entry | undefined, body: Record<string, any>, 
 /** What the page shows: the latest version, each action's latest approve/skip, and its latest edited time (for that version). */
 export function view(date: string, entry: Entry | undefined, storage: PlanView["storage"]): PlanView {
   const last = entry?.versions.at(-1) ?? null;
-  const withdrawn = !!last && (entry?.log ?? []).some((r) => r.event === "withdraw" && r.version === last.n);
+  const withdrawn = !!last && (entry?.log ?? []).some((r) => (r.event === "withdraw" || r.event === "supersede") && r.version === last.n);
   const plan = withdrawn ? null : last;
   const decisions: PlanView["decisions"] = {}, edits: PlanView["edits"] = {}, duty: PlanView["duty"] = {};
   for (const r of entry?.log ?? []) {
