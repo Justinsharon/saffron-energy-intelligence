@@ -82,7 +82,7 @@ unit.every_action_audited = true;
 const doneAll = Object.fromEntries(steps.map((s: any) => [s.id, { event: "done", by: "Rahul", at: "2026-11-18 09:00" }]));
 let sy = applyPlantEvent(empty(), { event: "sync", simHour: 6 }, at(), steps, doneAll).entry;
 assert.equal(Object.keys(sy.applied).length, steps.length);
-assert.ok(Object.values(sy.applied).every((a) => a.simHour === 6 && a.by === "Rahul"));
+assert.ok(Object.values(sy.applied).every((a) => a.by === "Rahul" && a.simHour === Math.min(23.99, Number(steps.find((s: any) => s.id === a.stepId).start.slice(0, 2)))), "applied from each step's start hour");
 assert.equal(applyPlantEvent(sy, { event: "sync", simHour: 9 }, at(), steps, doneAll).entry.audit.length, sy.audit.length, "a report is taken in once");
 const cant = { ...doneAll, [chw.id]: { event: "cant", by: "Rahul", at: "2026-11-18 09:05", reason: "guest complaint" } };
 sy = applyPlantEvent(sy, { event: "sync", simHour: 7 }, at(), steps, cant).entry;
@@ -94,6 +94,21 @@ let fx = ev(applyPlantEvent(empty(), { event: "sync", simHour: 6 }, at(), steps,
 const later = { ...doneAll, [chw.id]: { event: "done", by: "Rahul", at: "2026-11-18 23:59" } };
 fx = applyPlantEvent(fx, { event: "sync", simHour: 14 }, at(), steps, later).entry;
 assert.ok(fx.faults.every((f) => f.fixedAt !== undefined) || !steps.some((s: any) => s.id === chw.id), "Done after the fault fixes it");
+// Done taken in at ANY sim time applies from the step's own start; marked at sim 22:00, then the clock moved back to 20:00, fault 1 still alerts
+{
+  let late = applyPlantEvent(empty(), { event: "sync", simHour: 22 }, at(), steps, doneAll).entry;
+  const ahuStep = steps.find((s: any) => s.group === "ahu");
+  assert.equal(late.applied[ahuStep.id].simHour, Number(ahuStep.start.slice(0, 2)), "applied from the step's start hour");
+  assert.ok(late.lastFix !== null && late.lastFix <= 22, "lastFix never later than the sim clock");
+  const offH = Number(ahuStep.end.slice(0, 2));
+  late = ev(late, { event: "fault", type: "ahu_left_on", simHour: offH + 1 }).entry;
+  const now = offH + 1.3;
+  const rows = checkWindow(now, late.lastFix).map((k) => hourRow(day, sim(late), k, now));
+  assert.ok(rows.length >= 2, "the check window is not cut by a later fix");
+  const al = checkDay(day.date, steps, rows, `${day.date}T${String(offH + 1).padStart(2, "0")}:18`, day.ref, day.tariff, day.pf).alerts;
+  assert.ok(al.some((a) => a.id.includes("-ahu-")), "fault 1 raises the AHU alert after a Done at 22:00");
+  assert.deepEqual(checkWindow(20.2, 22), [18, 19, 20], "a fix after the sim clock is ignored");
+}
 unit.meters_follow_done_in_app = true;
 
 // 7. the Done event written by the plan page / duty Today (plans log) is exactly what the simulator reads; Undo puts the meters back on habit
