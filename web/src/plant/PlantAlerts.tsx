@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { Ticket } from "../components/parts";
 import { plannerName, setPlannerName } from "../planStore";
-import { postPlant, usePlantLink } from "./client";
+import { postPlant, usePlantLinkCtx } from "./client";
 import { costBreakdown } from "./cost";
 import { hhmm } from "./store";
 
@@ -11,7 +11,7 @@ const DOW = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"], MON = ["Jan", "Fe
 const label = (d: string) => { const x = new Date(`${d}T00:00:00Z`); return `${DOW[x.getUTCDay()]} ${x.getUTCDate()} ${MON[x.getUTCMonth()]}`; };
 
 export default function PlantAlerts() {
-  const link = usePlantLink();
+  const { link, refresh } = usePlantLinkCtx();             // the app's single Plant Room loop (App.tsx PlantLinkProvider)
   const [fixMsg, setFixMsg] = useState("");
   const [who, setWho] = useState(plannerName());
   if (!link) return null;
@@ -22,6 +22,7 @@ export default function PlantAlerts() {
     setPlannerName(by);
     const r = await postPlant({ date: link!.view.date, event: "clearFault", by, simHour: link!.view.readings?.simHour ?? 0 }).catch((e) => ({ error: String(e) }));
     setFixMsg("error" in r && r.error ? r.error : `Logged: fixed on site by ${by}. The alert clears with the next meter reading.`);
+    refresh();                                              // re-read at once: Today, Needs attention and the badge share this state
   }
   const { view, check } = link;
   const sim = view.readings ? hhmm(view.readings.simHour) : null;

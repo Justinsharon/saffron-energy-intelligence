@@ -10,6 +10,7 @@ import Method from "./pages/Method";
 import Report from "./pages/Report";
 import { Attention, DutyToday } from "./pages/Duty";
 import PlantAlerts from "./plant/PlantAlerts";
+import { PlantLinkCtx, plantAlertCount, usePlantLink } from "./plant/client";
 import Overview from "./pages/Overview";
 import SavingsPage from "./pages/Savings";
 import { BillCheck } from "./pages/Finance";
@@ -75,10 +76,16 @@ export default function App() {
   const today = real.slice(0, 10);
   const date = now.slice(0, 10), hour = Number(now.slice(11, 13));
   const pickRef = useRef<HTMLInputElement>(null);
+  const plant = usePlantLink();                                       // the one Plant Room loop: Today, Needs attention and the badge
+  const plantN = plantAlertCount(plant.link);
+  // a red count on "Needs attention" while a Plant Room simulation alert is active (simulated: never in the alert totals)
+  const badge = (p: string) => (p === "attention" && plantN > 0
+    ? <span className="nav-badge" data-testid="attention-badge" aria-label={`${plantN} Plant Room alert${plantN > 1 ? "s" : ""}`}>{plantN}</span> : null);
   const openPicker = () => { const el = pickRef.current; if (!el) return; try { el.showPicker(); } catch { el.focus(); } };
   return (
     <Ctx.Provider value={clock}>
      <HotelCtx.Provider value={{ hotel, setHotel }}>
+     <PlantLinkCtx.Provider value={plant}>
       <div className={`shell view-${view}`}>
        <div className="frame">
         <header className="top">
@@ -120,14 +127,14 @@ export default function App() {
         </header>
         <nav className="nav" aria-label="Sections">
           {menu.map((p) => (
-            <button key={p} title={PAGE[p].hint} aria-current={page === p ? "page" : undefined} onClick={() => go(p)}>{NAV_ICON[p]}{PAGE[p].label}</button>
+            <button key={p} title={PAGE[p].hint} aria-current={page === p ? "page" : undefined} onClick={() => go(p)}>{NAV_ICON[p]}{PAGE[p].label}{badge(p)}</button>
           ))}
           <span className="more-wrap" onKeyDown={(e) => e.key === "Escape" && setMore(false)}>
             <button className={`minor${inMore ? " here" : ""}`} aria-expanded={more} aria-haspopup="true" aria-current={inMore ? "page" : undefined}
-                    onClick={() => setMore(!more)}>{inMore ? `More: ${PAGE[page].label}` : "More"} ▾</button>
+                    onClick={() => setMore(!more)}>{inMore ? `More: ${PAGE[page].label}` : "More"}{extra.includes("attention") ? badge("attention") : null} ▾</button>
             {more && (
               <span className="more-menu" role="menu">
-                {extra.map((p) => <button key={p} role="menuitem" aria-current={page === p ? "page" : undefined} onClick={() => go(p)}>{PAGE[p].label}</button>)}
+                {extra.map((p) => <button key={p} role="menuitem" aria-current={page === p ? "page" : undefined} onClick={() => go(p)}>{PAGE[p].label}{badge(p)}</button>)}
               </span>
             )}
           </span>
@@ -137,6 +144,7 @@ export default function App() {
           <main>
             {page === "today" && <PlantAlerts />}
             {page === "today" && (view === "duty" ? <DutyToday /> : <Shift />)}
+            {page === "attention" && <PlantAlerts />}
             {page === "attention" && <Attention />}
             {page === "overview" && <Overview />}
             {page === "savings" && <SavingsPage />}
@@ -156,6 +164,7 @@ export default function App() {
         </div>
        </div>
       </div>
+     </PlantLinkCtx.Provider>
      </HotelCtx.Provider>
     </Ctx.Provider>
   );

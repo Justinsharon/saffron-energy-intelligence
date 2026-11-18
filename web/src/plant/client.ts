@@ -3,7 +3,7 @@
 // screen says so. Check: the REAL plan API /check with the simulated meter rows (`meters`, additive); if it fails, takes longer than 8 s,
 // or is an older build that ignores `meters`, the same rules run in the browser (web/src/plant/check.ts). The path used is logged.
 // Simulated readings never feed savings, bills or the live feed: nothing here writes anywhere but plant_state.
-import { useEffect, useRef, useState } from "react";
+import { createContext, useContext, useEffect, useRef, useState } from "react";
 import type { Alert } from "../data";
 import { istStamp, type SavedAction } from "../planlog";
 import { loadPlan, postPlan } from "../planStore";
@@ -75,7 +75,10 @@ export async function checkPlant(v: PlantView, apiBase = "/api"): Promise<PlantC
   const r = v.readings;
   if (!r || !v.plan || !r.recent.length) return null;
   const asOf = simAsOf(v.date, r.simHour);
-  const actions = v.plan.steps;
+  // the simulation checks only the steps the duty engineer has marked Done (what the floor committed to); an approved step not yet done
+  // stays on habit in the simulator and is not an alert here (real plans are checked against the real meters on Today, unchanged)
+  const actions = v.plan.steps.filter((a) => v.plan!.duty?.[a.id]?.event === "done");
+  if (!actions.length) return { alerts: [], path: "local", ms: 0, why: "no step marked done yet", asOf };
   const t0 = performance.now();
   let why = "";
   const ctrl = new AbortController();
@@ -104,14 +107,23 @@ const addDay = (d: string, k: number) => { const x = new Date(`${d}T00:00:00Z`);
 export const istToday = () => new Date(Date.now() + 5.5 * 3.6e6).toISOString().slice(0, 10);
 
 /** The app's link: watch today's and tomorrow's Plant Room (every 5 s while a session exists, every 15 s otherwise) and check the
- *  latest simulated readings. Returns null when no Plant Room session exists for either day. */
-export function usePlantLink(enabled = true): { view: PlantView; check: PlantCheck | null } | null {
-  const [state, setState] = useState<{ view: PlantView; check: PlantCheck | null } | null>(null);
+ *  latest simulated readings. ONE loop for the whole app (PlantLinkProvider): Today, Needs attention and the nav badge all read it,
+ *  so there is a single /check call per new reading and a fix clears everywhere at once. */
+export interface PlantLink { view: PlantView; check: PlantCheck | null }
+export const PlantLinkCtx = createContext<{ link: PlantLink | null; refresh: () => void }>({ link: null, refresh: () => {} });
+export const usePlantLinkCtx = () => useContext(PlantLinkCtx);
+/** Simulator alerts shown in the app (never in savings, bills or the alert totals). */
+export const plantAlertCount = (l: PlantLink | null) => l?.check?.alerts.length ?? 0;
+
+export function usePlantLink(enabled = true): { link: PlantLink | null; refresh: () => void } {
+  const [state, setState] = useState<PlantLink | null>(null);
   const last = useRef("");
+  const kick = useRef<() => void>(() => {});
   useEffect(() => {
     if (!enabled) return;
     let on = true, timer: ReturnType<typeof setTimeout>;
     const tick = async () => {
+      clearTimeout(timer);
       const today = istToday();
       const views = await getPlants([today, addDay(today, 1)]).catch(() => [] as PlantView[]);
       const live = views.filter((v): v is PlantView => !!v && v.exists).sort((a, b) => (b.updated > a.updated ? 1 : -1))[0];
@@ -127,10 +139,11 @@ export function usePlantLink(enabled = true): { view: PlantView; check: PlantChe
       }
       if (on) timer = setTimeout(tick, live ? 5000 : 15000);
     };
+    kick.current = () => { tick(); };
     tick();
     return () => { on = false; clearTimeout(timer); };
   }, [enabled]);
-  return state;
+  return { link: state, refresh: () => kick.current() };
 }
 
 /** Tomorrow's plan page: which steps were applied in the Plant Room for this date (polled every 10 s). */

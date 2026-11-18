@@ -451,3 +451,4 @@ input.name { width: 180px; }
 .duty-row { display: grid; grid-template-columns: 110px 1fr auto; gap: 10px; align-items: center; padding: 6px 0; border-top: 1px solid var(--rule); }
 .duty-done-cell { display: inline-flex; gap: 8px; align-items: center; }
 @media (max-width: 700px) { .duty-row { grid-template-columns: 1fr; } }
+.nav-badge { display: inline-grid; place-items: center; min-width: 20px; height: 20px; padding: 0 6px; margin-left: 6px; border-radius: 999px; background: var(--red); color: #fff; font-size: 12px; font-weight: 700; line-height: 1; }
