@@ -1,2 +1,12 @@
-07:49:06 a. plan 2026-11-19: live weather, 0 steps approved · "Weather: Open-Meteo forecast for Gurugram, top 25 °C. Rooms and covers are suggested from "
-07:58:28 FAIL: simulator did not show the Done steps
+09:15:28 a. plan 2026-11-19: live weather, 9 steps approved · "Weather: Open-Meteo forecast for Gurugram, top 25 °C. Rooms and covers are suggested from "
+09:15:36 b. 7 steps marked done (AHU, chillers, CHW) -> simulator shows them as plan 1.9 s after the last click; 4 channels on plan
+09:15:36 b. main meter, habit vs plan: kVA at 14:00 662 -> 666; kWh for the day (to 23:45) 11461 -> 11322
+09:15:39 c. AHU alert 2.2 s after fault 1: ₹9,245 a day · Cost so far: ₹770 (2 h since the planned off time) · If left on all day: ₹9,245 (₹385 an hour × 24)
+09:15:39 c. other simulator alerts at the same time (steps approved but not marked done): Plan said no laundry in the 18:00–22:00 peak; it ran from 18:00
+09:15:39 c. evidence: Hour ahu_banquet_kw Extra kWh ₹ 19:00 46.87 46.8 ₹381 20:00 47.69 47.7 ₹388 Total 94.6 ₹770
+09:15:45 d. alert cleared 5.8 s after Fixed on site
+09:15:51 d. audit log has step marked done, fault injected, fault cleared rows
+09:15:52 console: [plant room] /check path: plan API at /api (1578 ms), 2 alert(s) | [plant room] /check path: plan API at /api (1601 ms), 0 alert(s)
+09:15:52 e. http://127.0.0.1:5173 · 2026-11-19 | plan: v1 by "TEST – Claude Code" withdrawn | simulator: cleared (faults 0, readings none, steps following plan 0) | check: saved plan for 2026-11-19: none
+09:16:04 e. clean: no plan for tomorrow, no simulator alert on Today
+09:16:04 PASS

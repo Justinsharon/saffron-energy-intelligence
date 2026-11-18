@@ -43,6 +43,7 @@ const HEAD: Record<string, string> = {
 };
 /** "Open-Meteo hourly forecast" -> "Open-Meteo forecast for Gurugram"; other sources as the plan API names them. */
 const weatherLabel = (w: string, hotel: string) => (/open-meteo/i.test(w) ? `Open-Meteo forecast for ${hotel}` : w || "typical temperatures for this date");
+const hourOfT = (t: string) => Number(t.slice(0, 2)) + (t.includes("next day") ? 24 : 0);
 const DAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 const dow = (d: string) => DAYS[parse(d).getUTCDay()];
 const addDays = (d: string, k: number) => addMs(`${d}T00:00`, k * DAY_MS).slice(0, 10);
@@ -372,7 +373,12 @@ function TomorrowPlan() {
   useEffect(() => setJustSaved(false), [date, site]);
   const save = async () => { setPlannerName(name); await submit(); setJustSaved(true); };
   const approved = actions.filter((a) => saved?.decisions[a.id]?.event === "approve").length;
-  const plantApplied = usePlantApplied(date, site);                // meter simulator: which approved steps its meters follow (Done in the app)
+  const plantApplied = usePlantApplied(date, site);
+  const approvedSaved = useMemo(() => (saved?.plan ? checkActions(saved).filter((a) => a.decision === "approve").sort((x, y) => hourOfT(x.start) - hourOfT(y.start)) : []), [saved]);
+  const duty = (id: string, ev: "done" | "undone") => {
+    if (!name.trim()) { setErr("Enter your name first (Your name, above): every report is logged with who made it."); nameRef.current?.focus(); return; }
+    setPlannerName(name); send({ event: ev, action_id: id });
+  };                // meter simulator: which approved steps its meters follow (Done in the app)
   const set = (k: keyof Form, v: unknown) => form && setForm({ ...form, [k]: v, touched: { ...form.touched, [k]: true } });
 
   async function send(body: Record<string, unknown>) {
@@ -498,11 +504,30 @@ function TomorrowPlan() {
             </div>
           )}
           {saved?.plan && dirty && <p className="small" style={{ color: "var(--coral)", marginTop: 0 }}>The plan has changed since it was saved. Save the bookings and plan (above) before approving steps.</p>}
+          {/* the duty engineer's Done / Undo on the SAVED, APPROVED steps: always shown when a plan is saved, even if the forecast has moved since
+              (a moved forecast hides the approvals in the list below until the plan is saved again, but never the steps already approved) */}
+          {approvedSaved.length > 0 && (
+            <div className="panel flat duty-panel" data-testid="duty-panel" style={{ marginBottom: 14 }}>
+              <div style={{ marginBottom: 6 }}><strong>Duty engineer: mark approved steps done</strong>{" "}
+                <span className="small muted">plan v{saved!.plan!.n} · {approvedSaved.filter((a) => saved!.duty[a.id]?.event === "done").length} of {approvedSaved.length} done · the meter simulator follows each step once it is done</span></div>
+              <ul className="duty-list">
+                {approvedSaved.map((a) => { const d = saved!.duty[a.id]; return (
+                  <li key={a.id} className="duty-row">
+                    <span className="num">{a.start.replace(" (next day)", "")}–{a.end === "00:00 (next day)" ? "24:00" : a.end.replace(" (next day)", "⁺¹")}</span>
+                    <span><span className="tag">{TAG[a.group]}</span> {a.setting} <span className="small muted">· {a.equipment}</span></span>
+                    {d?.event === "done"
+                      ? <span className="duty-done-cell"><span className="small status ok" data-testid="done-by">Done by {d.by} at {d.at.slice(11)}</span>
+                          <button className="btn ghost" style={{ padding: "4px 10px", fontSize: 13 }} disabled={busy} onClick={() => duty(a.id, "undone")}>Undo</button></span>
+                      : <button className="btn" disabled={busy} onClick={() => duty(a.id, "done")} data-testid="mark-done">Mark done (duty engineer)</button>}
+                  </li>); })}
+              </ul>
+            </div>
+          )}
           <ol className="timeline">
             {actions.map((a) => (
               <Step key={a.id + (saved?.plan?.n ?? 0)} a={a} edit={saved?.edits[a.id]} decision={dirty ? undefined : saved?.decisions[a.id]} canDecide={!!name.trim()} busy={busy}
                     onDecide={(ev, x) => decide(a, ev, x)} chk={past ? chkBy[a.id] : undefined} changed={changed[a.id]} plant={plantApplied[a.id]}
-                    duty={dirty ? undefined : saved?.duty[a.id]} onDuty={dirty ? undefined : (ev) => { if (!name.trim()) { setErr("Enter your name first: every report is logged with who made it."); return; } setPlannerName(name); send({ event: ev, action_id: a.id }); }} />
+                    duty={dirty ? undefined : saved?.duty[a.id]} />
             ))}
           </ol>
           {!name.trim() && <p className="small muted">Enter your name in the bookings card to save, approve, skip or change steps. It is kept on this device.</p>}
