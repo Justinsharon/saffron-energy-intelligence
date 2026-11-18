@@ -40,3 +40,15 @@ export async function writeJSON(name: string, obj: unknown): Promise<void> {
   if (MEM) { MEM.set(name, JSON.stringify(obj)); return; }
   await gh("PATCH", { files: { [name]: { content: JSON.stringify(obj, null, 1) } } });
 }
+
+/** Read-modify-write with retries: GitHub answers 409 when two edits of the gist cross (e.g. the meter simulator posting readings while a
+ *  plan step is approved). The whole step (read, apply the event, write) is re-run on the fresh gist, up to 4 times. */
+export async function withRetry<T>(step: () => Promise<T>, tries = 4): Promise<T> {
+  for (let i = 1; ; i++) {
+    try { return await step(); }
+    catch (e) {
+      if (i >= tries || !/GitHub (409|5\d\d)/.test(String((e as Error).message ?? e))) throw e;
+      await new Promise((r) => setTimeout(r, 300 * i + Math.random() * 400));
+    }
+  }
+}
