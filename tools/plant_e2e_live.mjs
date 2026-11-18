@@ -13,7 +13,7 @@ const DATE = new Date(Date.now() + 5.5 * 3.6e6 + 864e5).toISOString().slice(0, 1
 const log = [];
 const step = (s) => { const l = `${new Date().toISOString().slice(11, 19)} ${s}`; log.push(l); console.log(l); };
 const fail = (s) => { step(`FAIL: ${s}`); throw new Error(s); };
-const proxy = process.env.HTTPS_PROXY ? { server: process.env.HTTPS_PROXY } : undefined;
+const proxy = process.env.HTTPS_PROXY ? { server: process.env.HTTPS_PROXY, bypass: "localhost,127.0.0.1" } : undefined;
 const browser = await chromium.launch({ proxy });
 const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 }, deviceScaleFactor: 2, ignoreHTTPSErrors: true });
 await ctx.addInitScript((n) => { try { if (!localStorage.getItem("view_as")) localStorage.setItem("view_as", "chief"); localStorage.setItem("planner", n); } catch {} }, NAME);
@@ -68,11 +68,16 @@ try {
   await app.evaluate(() => localStorage.setItem("view_as", "duty"));
   await app.goto(`${BASE}/#/today`); await app.reload();
   await app.waitForSelector("[data-testid=plant-alert] .title:has-text('banquet AHUs')", { timeout: 20000 }).catch(() => fail("no alert within 20 s"));
-  const cost = await app.getByTestId("plant-cost").first().innerText();
-  const perDay = await app.locator("[data-testid=plant-alert] .money b").first().innerText();
-  step(`c. alert ${((Date.now() - t1) / 1000).toFixed(1)} s after fault 1: ${perDay} a day · ${cost.split("\n")[0]}`);
+  const card = app.locator("[data-testid=plant-alert]").filter({ hasText: "banquet AHUs" }).first();
+  const cost = await card.getByTestId("plant-cost").innerText();
+  const perDay = await card.locator(".money b").first().innerText();
+  const others = (await app.locator("[data-testid=plant-alert] .title").allInnerTexts()).filter((t) => !t.includes("banquet AHUs"));
+  step(`c. AHU alert ${((Date.now() - t1) / 1000).toFixed(1)} s after fault 1: ${perDay} a day · ${cost.split("\n")[0]}`);
+  if (others.length) step(`c. other simulator alerts at the same time (steps approved but not marked done): ${others.join(" | ")}`);
+  await card.getByTestId("plant-cost").locator("summary").click();
+  step(`c. evidence: ${(await card.locator(".plant-cost-tab").innerText()).replace(/\s+/g, " ")}`);
   if (!/Cost so far/.test(cost) || !/If left on all day/.test(cost)) fail("cost lines missing");
-  await app.getByTestId("plant-cost").first().locator("summary").click();
+
   await app.locator("[data-testid=plant-alerts]").scrollIntoViewIfNeeded();
   await app.screenshot({ path: `${OUT}c_app_alert.png` });
   await plant.getByRole("button", { name: /Pause/ }).click();

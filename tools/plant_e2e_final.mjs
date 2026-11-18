@@ -13,7 +13,7 @@ const DATE = new Date(Date.now() + 5.5 * 3.6e6 + 864e5).toISOString().slice(0, 1
 const log = [];
 const step = (s) => { const l = `${new Date().toISOString().slice(11, 19)} ${s}`; log.push(l); console.log(l); };
 const fail = (s) => { step(`FAIL: ${s}`); throw new Error(s); };
-const proxy = process.env.HTTPS_PROXY ? { server: process.env.HTTPS_PROXY } : undefined;
+const proxy = process.env.HTTPS_PROXY ? { server: process.env.HTTPS_PROXY, bypass: "localhost,127.0.0.1" } : undefined;
 const browser = await chromium.launch({ proxy });
 const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 }, deviceScaleFactor: 2, ignoreHTTPSErrors: true });
 await ctx.addInitScript((n) => { try { if (!localStorage.getItem("view_as")) localStorage.setItem("view_as", "chief"); localStorage.setItem("planner", n); } catch {} }, NAME);
