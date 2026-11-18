@@ -5,7 +5,7 @@ import { createRequire } from "node:module";
 const require = createRequire(import.meta.url);
 const { chromium } = require("playwright");
 const BASE = (process.argv[2] ?? "https://saffron-energy-intelligence1.netlify.app").replace(/\/$/, "");
-const DATE = new Date(Date.now() + 5.5 * 3.6e6 + 864e5).toISOString().slice(0, 10);
+const DATE = process.env.PLANT_DATE ?? new Date(Date.now() + 5.5 * 3.6e6 + 864e5).toISOString().slice(0, 10);   // PLANT_DATE: avoid a plan someone is rehearsing
 const say = (s) => console.log(`${new Date().toISOString().slice(11, 19)} ${s}`);
 const fail = (s) => { say(`FAIL: ${s}`); process.exitCode = 1; throw new Error(s); };
 const browser = await chromium.launch({ proxy: process.env.HTTPS_PROXY ? { server: process.env.HTTPS_PROXY, bypass: "localhost,127.0.0.1" } : undefined });
@@ -14,6 +14,9 @@ await ctx.addInitScript(() => { try { if (!localStorage.getItem("view_as")) loca
 const app = await ctx.newPage(), plant = await ctx.newPage();
 try {
   await app.goto(`${BASE}/#/demand`);
+  await app.waitForSelector("text=Weather:", { timeout: 60000 });
+  await app.locator("input[type=date]").first().fill(DATE);
+  await app.waitForTimeout(3000);
   await app.waitForSelector("text=Weather:", { timeout: 60000 });
   if (!(await app.getByRole("button", { name: "Remove" }).count())) await app.getByRole("button", { name: "+ Add a booking" }).click();
   await app.getByRole("spinbutton").last().fill("300");

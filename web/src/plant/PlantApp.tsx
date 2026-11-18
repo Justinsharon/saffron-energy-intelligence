@@ -9,7 +9,7 @@ import { istStamp, type SavedAction } from "../planlog";
 import { CHECK_WINDOW_H, FAULTS, checkWindow, covers, equipOf, hourOf, hourRow, snapshot, soFar,
   type FaultType, type Forecast, type PlantIndex, type PlantProfile, type SimDay, type SimState, type Snapshot } from "./model";
 import { applyPlantEvent, activeFaults, hhmm, unsynced, type PlantView } from "./store";
-import { getPlant, getPlants, istToday, postPlant } from "./client";
+import { getPlant, getPlants, istToday, postPlant, resetDemo } from "./client";
 
 const PRESENTER = "Demo presenter";            // who injects / clears demo faults (the fault panel is the only control here)
 const SPEEDS = [5, 10, 30];
@@ -266,7 +266,13 @@ function Sim({ date, setDate }: { date: string; setDate: (d: string) => void }) 
         <FaultPanel faults={faults.map((f) => f.type)} busy={busy} hasAhu={!!ahuStep} t={tc} ahuOff={ahuStep ? ahuStep.end.replace(" (next day)", "") : null}
                     onFault={(type) => act({ event: "fault", type }, `${FAULTS[type].label}: injected at sim ${hhmm(tc)}.`)}
                     onClear={() => act({ event: "clearFault" }, "Fault cleared.")}
-                    onReset={() => act({ event: "reset", reason: "rehearsal reset" }, "Simulation reset.")} />
+                    onReset={() => act({ event: "reset", reason: "rehearsal reset" }, "Simulation reset.")}
+                    onDemoReset={async () => {
+                      setBusy(true); setMsg(null);
+                      try { const r = await resetDemo(date, Math.round(tc * 100) / 100); if (r.view) setView(r.view); setMsg({ kind: "ok", text: r.lines.join(" ") }); }
+                      catch (e) { setMsg({ kind: "err", text: `Reset demo failed: ${String((e as Error).message ?? e)}` }); }
+                      finally { setBusy(false); }
+                    }} />
       </section>
 
       <section className="pr-panel pr-audit">
@@ -341,8 +347,8 @@ function ConfirmButton({ label, confirm, disabled, onConfirm }: { label: string;
   return <button className={`pr-btn ${armed ? "warn on" : "ghost"}`} disabled={disabled} onClick={() => { if (armed) { setArmed(false); onConfirm(); } else setArmed(true); }}>{armed ? confirm : label}</button>;
 }
 
-function FaultPanel({ faults, busy, hasAhu, t, ahuOff, onFault, onClear, onReset }: { faults: FaultType[]; busy: boolean; hasAhu: boolean; t: number; ahuOff: string | null;
-  onFault: (f: FaultType) => void; onClear: () => void; onReset: () => void }) {
+function FaultPanel({ faults, busy, hasAhu, t, ahuOff, onFault, onClear, onReset, onDemoReset }: { faults: FaultType[]; busy: boolean; hasAhu: boolean; t: number; ahuOff: string | null;
+  onFault: (f: FaultType) => void; onClear: () => void; onReset: () => void; onDemoReset: () => void }) {
   return (
     <div className="pr-panel pr-faults">
       <div className="pr-lbl">Simulate a fault (demo)</div>
@@ -356,11 +362,12 @@ function FaultPanel({ faults, busy, hasAhu, t, ahuOff, onFault, onClear, onReset
       <div className="pr-row wrap">
         <button className="pr-btn" disabled={busy || !faults.length} onClick={onClear}>Clear fault</button>
         <ConfirmButton label="Reset simulation" confirm="Confirm reset" disabled={busy} onConfirm={onReset} />
+        <ConfirmButton label="Reset demo for this day" confirm="Confirm reset" disabled={busy} onConfirm={onDemoReset} />
       </div>
       <div className="pr-small muted" style={{ marginTop: 8 }}>
         {faults.length ? `Active: ${faults.map((f) => FAULTS[f].label).join(", ")}.` : "No fault active."}
         {hasAhu && ahuOff ? ` Fault 1: the AHU keeps running past its planned off time (${ahuOff}).` : ""} Fault 3 acts only inside 18:00–22:00{t < 18 ? " (from 18:00)" : ""}.
-        An alert needs 2 of the last {CHECK_WINDOW_H} sim hours to differ from the approved plan (the plan check's own rule). The duty engineer can mark it fixed on the alert in the app.
+        "Reset demo for this day" withdraws a TEST plan (never one saved under a real name), sets aside a weather-scenario plan and clears the simulator; once per rehearsal is enough (each press writes to the shared storage). An alert needs 2 of the last {CHECK_WINDOW_H} sim hours to differ from the approved plan (the plan check's own rule). The duty engineer can mark it fixed on the alert in the app.
       </div>
     </div>
   );
