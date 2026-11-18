@@ -59,7 +59,7 @@ try {
   await at(23.75); const habitKwh = await kwhOf();
   await at(14); const before = await kvaOf();
   await at(0);                                                             // Done is taken in at the sim time: from 00:00 the whole day follows the plan
-  const toMark = app.locator("li.step").filter({ hasText: /Banquet AHUs|Chillers \(CH-1|Chilled-water supply setpoint/ });
+  const toMark = app.locator("[data-testid=duty-panel] li.duty-row").filter({ hasText: /Banquet AHUs|Chillers \(CH-1|Chilled-water supply setpoint/ });
   const n = await toMark.count();
   for (let i = 0; i < n; i++) {                                             // one at a time: wait for each "Done by" before the next click
     const li = toMark.nth(i);
