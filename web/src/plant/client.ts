@@ -6,7 +6,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { Alert } from "../data";
 import { istStamp, type SavedAction } from "../planlog";
-import { loadPlan } from "../planStore";
+import { loadPlan, postPlan } from "../planStore";
 import { checkActions } from "../planlog";
 import type { PlanDay } from "../plan";
 import { checkDay } from "./check";
@@ -145,4 +145,26 @@ export function usePlantApplied(date: string, site: string): PlantView["applied"
     return () => { on = false; clearTimeout(timer); };
   }, [date, site]);
   return applied;
+}
+
+/** "Reset demo for this day" on the simulator (same rules as tools/demo_reset.mjs): withdraw the saved plan only if a TEST name saved it,
+ *  set aside a weather-scenario plan, and clear the simulator (fault, readings, Done steps; audit kept, marked superseded). Nothing is
+ *  deleted and a plan saved under a real name is never touched. Returns one line per action for the page. */
+export const DEMO_RESET_BY = "demo reset (presenter)";
+export async function resetDemo(date: string, simHour: number): Promise<{ lines: string[]; view?: PlantView }> {
+  const lines: string[] = [];
+  const v = await loadPlan(date, "GGN");
+  const p = v.plan;
+  if (!p) lines.push("No saved plan for this day.");
+  else if (p.inputs?.weather_mode && p.inputs.weather_mode !== "live") {
+    await postPlan({ date, site: "GGN", event: "supersede", by: DEMO_RESET_BY, reason: "demo reset: the demo uses the live forecast" });
+    lines.push(`Weather-scenario plan v${p.n} (${p.by}) set aside.`);
+  } else if (/^TEST/i.test(p.by)) {
+    await postPlan({ date, site: "GGN", event: "withdraw", by: DEMO_RESET_BY, reason: "demo reset from the meter simulator" });
+    lines.push(`TEST plan v${p.n} (${p.by}) withdrawn, with its Done marks.`);
+  } else lines.push(`Plan v${p.n} saved by ${p.by} kept (not a TEST name).`);
+  const r = await postPlant({ date, event: "demoReset", by: DEMO_RESET_BY, simHour, reason: "Reset demo for this day (meter simulator)" });
+  if (r.error) throw new Error(r.error);
+  lines.push("Simulator cleared: no fault, no readings, every channel back on habit.");
+  return { lines, view: await getPlant(date) };
 }
