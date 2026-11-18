@@ -188,7 +188,7 @@ function Sim({ date, setDate }: { date: string; setDate: (d: string) => void }) 
   const after = ahuStep ? Math.min(23, hourOf(ahuStep.end) + 1) : 19;
   const quick: [string, number][] = [["06:00", 6], [conf ? "13:00 conference" : "13:00", 13], [`${String(after).padStart(2, "0")}:00 after event`, after]];
   const duty = view.plan?.duty ?? {};
-  const done = day.steps.filter((a) => duty[a.id]?.event === "done").length;
+  const done = day.steps.filter((a) => duty[a.id]?.event === "done" && view.applied[a.id]).length;      // marked Done AND taken in by the meters
   const kwh = soFar(day, st, tc).kwh;
   const pct = snap.kva / 1000;
   // what moves each channel right now: the plan step done in the app, a demo fault, or habit
