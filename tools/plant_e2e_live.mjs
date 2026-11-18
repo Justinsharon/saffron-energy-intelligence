@@ -29,9 +29,21 @@ try {
   if (!(await app.getByRole("button", { name: "Remove" }).count())) await app.getByRole("button", { name: "+ Add a booking" }).click();
   await app.getByRole("spinbutton").last().fill("300");
   await app.waitForTimeout(4000);
-  await app.getByRole("button", { name: "Save bookings and plan" }).click();
+  // save until the page shows the saved plan as current (a slow live re-plan can land after the first save)
+  for (let i = 0; i < 4; i++) {
+    const save = app.getByRole("button", { name: "Save bookings and plan" });
+    if (!(await app.locator("text=not saved yet").count()) && !(await app.locator("text=The plan has changed since it was saved").count())) break;
+    if (await save.isEnabled().catch(() => false)) await save.click();
+    await app.waitForTimeout(5000);
+  }
   await app.waitForSelector("button:has-text('Approve')", { timeout: 30000 });
-  for (let i = 0; i < 20; i++) { const b = app.locator("button:has-text('Approve'):not([disabled])").first(); if (!(await b.count())) break; await b.click(); await app.waitForTimeout(1200); }
+  for (let i = 0; i < 20; i++) {
+    const ok = app.getByRole("button", { name: "Save and continue" });
+    if (await ok.count()) { await ok.click(); await app.waitForTimeout(4000); continue; }
+    const b = app.locator("li.step button:has-text('Approve'):not([disabled])").first();
+    if (!(await b.count())) break;
+    await b.click(); await app.waitForTimeout(1500);
+  }
   const approved = await app.locator("li.step .status.ok").count();
   const weather = await app.getByTestId("weather-line").innerText();
   if (/SCENARIO/.test(weather) || (await app.getByTestId("scenario-banner").count())) fail("scenario shown");
@@ -49,7 +61,13 @@ try {
   await at(0);                                                             // Done is taken in at the sim time: from 00:00 the whole day follows the plan
   const toMark = app.locator("li.step").filter({ hasText: /Banquet AHUs|Chillers \(CH-1|Chilled-water supply setpoint/ });
   const n = await toMark.count();
-  for (let i = 0; i < n; i++) { await toMark.nth(i).getByTestId("mark-done").click(); await app.waitForTimeout(1500); }
+  for (let i = 0; i < n; i++) {                                             // one at a time: wait for each "Done by" before the next click
+    const li = toMark.nth(i);
+    for (let k = 0; k < 3 && !(await li.getByTestId("done-by").count()); k++) {
+      await li.getByTestId("mark-done").click({ timeout: 15000 }).catch(() => {});
+      await li.getByTestId("done-by").waitFor({ timeout: 15000 }).catch(() => {});
+    }
+  }
   const t0 = Date.now();
   await plant.waitForFunction((k) => document.querySelector("[data-testid=done-count]")?.textContent === String(k), n, { timeout: 15000 }).catch(() => fail("simulator did not show the Done steps"));
   await plant.waitForSelector(".pr-mtile.src-plan", { timeout: 10000 });
