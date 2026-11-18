@@ -5,7 +5,7 @@
 //   - only steps APPROVED on Tomorrow's plan can be applied or overridden; monitored-only systems can never be;
 //   - an override needs a reason and passes the same guardrails as the plan (never CHW < 6.5 °C); a refused override is logged too;
 //   - every apply / override / fault / clear / reset is appended to the audit log (who, when, what, why); readings are the latest snapshot only.
-import { FAULTS, isMonitored, overrideError, type ActiveFault, type Applied, type FaultType, type MeterRow } from "./model";
+import { FAULTS, hourOf, isMonitored, overrideError, type ActiveFault, type Applied, type FaultType, type MeterRow } from "./model";
 import type { SavedAction } from "../planlog";
 
 export interface AuditRow { at: string; by: string; event: string; what: string; why?: string; simHour?: number; stepId?: string; value?: string | number;
@@ -45,15 +45,18 @@ export function applyPlantEvent(entry: PlantEntry | undefined, body: Record<stri
     for (const a of unsynced(e, duty, approved)) {
       const r = duty?.[a.id];
       if (!r) {                                               // the Done was undone in the app: back to habit from now
-        delete e.synced![a.id]; delete e.applied[a.id]; e.lastFix = t0;
+        delete e.synced![a.id]; delete e.applied[a.id]; e.lastFix = e.lastFix === null ? null : Math.min(e.lastFix, t0);
         e.audit.push({ at, by: "Saffron app", event: "done undone", what: `${label(a)}: meters back on habit from sim ${hhmm(t0)}`, simHour: t0, stepId: a.id });
         continue;
       }
       e.synced![a.id] = r.at;
       if (r.event === "done") {
-        e.applied[a.id] = { stepId: a.id, kind: "apply", by: r.by, at: r.at, simHour: t0 };
-        e.lastFix = t0;                                       // a change on the floor: the plan check starts again from here
-        e.audit.push({ at, by: r.by, event: "step marked done", what: `${label(a)}: meters follow the plan from sim ${hhmm(t0)}`, why: `reported ${r.at.slice(11)}`, simHour: t0, stepId: a.id });
+        // Done = the step was carried out as planned: the meters follow it from the step's own start hour, wherever the sim clock is
+        // (so a Done marked at sim 22:00 still covers 08:00-19:00), and the plan check restarts no later than the current sim hour
+        const from = Math.min(23.99, hourOf(a.start));
+        e.applied[a.id] = { stepId: a.id, kind: "apply", by: r.by, at: r.at, simHour: from };
+        e.lastFix = Math.min(from, t0);
+        e.audit.push({ at, by: r.by, event: "step marked done", what: `${label(a)}: meters follow the plan from ${hhmm(from)}`, why: `reported ${r.at.slice(11)}`, simHour: t0, stepId: a.id });
         for (const f of activeFaults(e).filter((f) => FAULTS[f.type].fixGroup === a.group && r.at >= f.at)) {
           f.fixedAt = t0; f.fixedBy = r.by; e.lastFix = t0;
           e.audit.push({ at, by: r.by, event: "fault fixed", what: FAULTS[f.type].label, why: "step done again in the app", simHour: t0, stepId: a.id });

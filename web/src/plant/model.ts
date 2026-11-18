@@ -260,7 +260,9 @@ export const CHECK_WINDOW_H = 3;
 /** The hours sent to the plan check: the last CHECK_WINDOW_H simulated hours, but none before the last fix (an Apply or Clear fault), so a fix shows at once. */
 export function checkWindow(now: number, lastFix: number | null): number[] {
   const h = Math.min(23, Math.floor(now));
-  const from = Math.max(0, h - CHECK_WINDOW_H + 1, lastFix === null ? 0 : Math.min(h, Math.floor(lastFix)));
+  // a fix later than the sim clock (the clock was moved back) does not shorten the window
+  const fix = lastFix === null || lastFix > now ? 0 : Math.floor(lastFix);
+  const from = Math.max(0, h - CHECK_WINDOW_H + 1, fix);
   const out: number[] = []; for (let k = from; k <= h; k++) out.push(k); return out;
 }
 
