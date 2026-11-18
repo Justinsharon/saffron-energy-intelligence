@@ -62,7 +62,7 @@ export async function postPlant(body: Record<string, unknown>): Promise<{ view: 
 }
 
 // ---- the check: real API first, browser rules as the fallback ----
-export interface PlantCheck { alerts: Alert[]; path: "api" | "local"; ms: number; why?: string; asOf: string }
+export interface PlantCheck { alerts: Alert[]; path: "api" | "local" | "none"; ms: number; why?: string; asOf: string; checked?: number; approved?: number }
 const CHECK_TIMEOUT_MS = 8000;
 const dayCache: Record<string, PlanDay> = {};
 async function planDay(date: string): Promise<PlanDay> {
@@ -78,7 +78,8 @@ export async function checkPlant(v: PlantView, apiBase = "/api"): Promise<PlantC
   // the simulation checks only the steps the duty engineer has marked Done (what the floor committed to); an approved step not yet done
   // stays on habit in the simulator and is not an alert here (real plans are checked against the real meters on Today, unchanged)
   const actions = v.plan.steps.filter((a) => v.plan!.duty?.[a.id]?.event === "done");
-  if (!actions.length) return { alerts: [], path: "local", ms: 0, why: "no step marked done yet", asOf };
+  const approved = v.plan.steps.length;
+  if (!actions.length) return { alerts: [], path: "none", ms: 0, why: "no step marked done yet", asOf, checked: 0, approved };
   const t0 = performance.now();
   let why = "";
   const ctrl = new AbortController();
@@ -90,7 +91,7 @@ export async function checkPlant(v: PlantView, apiBase = "/api"): Promise<PlantC
     if (j && j.meters_source === "simulated") {
       const ms = Math.round(performance.now() - t0);
       console.info(`[plant room] /check path: plan API at ${apiBase} (${ms} ms), ${j.alerts.length} alert(s)`);
-      return { alerts: j.alerts as Alert[], path: "api", ms, asOf };
+      return { alerts: j.alerts as Alert[], path: "api", ms, asOf, checked: actions.length, approved };
     }
     why = j ? "the API answered without checking the simulated readings (older build: redeploy it)" : `the API answered ${res.status}`;
   } catch (e) {
@@ -100,7 +101,7 @@ export async function checkPlant(v: PlantView, apiBase = "/api"): Promise<PlantC
   const local = checkDay(v.date, actions, r.recent, asOf, day.ref, day.tariff, day.pf);
   const ms = Math.round(performance.now() - t0);
   console.info(`[plant room] /check path: local rules in the browser (${why}; ${ms} ms), ${local.alerts.length} alert(s)`);
-  return { alerts: local.alerts, path: "local", ms, why, asOf };
+  return { alerts: local.alerts, path: "local", ms, why, asOf, checked: actions.length, approved };
 }
 
 const addDay = (d: string, k: number) => { const x = new Date(`${d}T00:00:00Z`); x.setUTCDate(x.getUTCDate() + k); return x.toISOString().slice(0, 10); };

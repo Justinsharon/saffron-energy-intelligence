@@ -30,9 +30,16 @@ export default function PlantAlerts() {
     <section className="card plant-link" data-testid="plant-alerts" aria-live="polite">
       <div className="plant-link-head">
         <span className="plant-tag">From Plant Room simulation</span>
-        <span className="small muted">Gurugram · {label(view.date)}{sim ? ` · sim time ${sim}` : ""} · checked {check ? (check.path === "api" ? `by the plan API (${check.ms} ms)` : "in the browser (plan API unavailable)") : "…"}</span>
+        <span className="small muted">Gurugram · {label(view.date)}{sim ? ` · sim time ${sim}` : ""} · {!check ? "checking…" : check.path === "none" ? "nothing checked yet"
+          : `${check.checked} step${check.checked === 1 ? "" : "s"} marked Done checked ${check.path === "api" ? `by the plan API (${check.ms} ms)` : "in the browser (plan API unavailable)"}`}</span>
       </div>
-      {check && check.alerts.length === 0 && <p className="small" style={{ margin: "6px 0 0" }} data-testid="plant-no-alert">No problems in the simulated readings: the plant follows the approved plan.</p>}
+      {check && check.path === "none" && (
+        <p className="small" style={{ margin: "6px 0 0" }} data-testid="plant-nothing-done">
+          <strong>Nothing to check yet:</strong> {check.approved ? `${check.approved} approved step${check.approved === 1 ? " is" : "s are"} not marked Done.` : "the plan has no approved steps."}{" "}
+          The simulator checks only steps the duty engineer has marked Done (Tomorrow's plan → "Duty engineer: mark approved steps done"). Mark the banquet AHU step done, then inject Fault 1 on /plant.
+        </p>
+      )}
+      {check && check.path !== "none" && check.alerts.length === 0 && <p className="small" style={{ margin: "6px 0 0" }} data-testid="plant-no-alert">No problems in the simulated readings: the steps marked Done are being followed.</p>}
       {check?.alerts.map((a) => (
         <div key={a.id} className="plant-alert" data-testid="plant-alert">
           {/* ₹ a day while it continues = the check's ₹ per deviating hour × 24 (the cost so far is in the card's details) */}
