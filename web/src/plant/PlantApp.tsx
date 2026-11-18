@@ -13,7 +13,6 @@ import { getPlant, getPlants, istToday, postPlant, resetDemo } from "./client";
 
 const PRESENTER = "Demo presenter";            // who injects / clears demo faults (the fault panel is the only control here)
 const SPEEDS = [5, 10, 30];
-const READINGS_EVERY_MS = 12000;               // shared storage is a gist: at most one readings write every 12 s (events carry readings too)
 const POLL_MS = 5000;                          // the plans log is read every 5 s, so a Done in the app reaches the meters within one poll
 const DOW = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"], MON = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 const addDay = (d: string, k: number) => { const x = new Date(`${d}T00:00:00Z`); x.setUTCDate(x.getUTCDate() + k); return x.toISOString().slice(0, 10); };
@@ -158,16 +157,17 @@ function Sim({ date, setDate }: { date: string; setDate: (d: string) => void }) 
     return () => { on = false; clearTimeout(timer); };
   }, [date, day, post]);
 
-  // readings: every sim hour, at most one write every 12 s (trailing)
-  const lastPost = useRef(0), pending = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // readings: at most once per sim hour per day, never while paused, so only the tab that is PLAYING writes them (a paused or second
+  // tab only reads). Events (fault, clear, reset, a Done taken in) still carry their own readings, so a change shows at once.
+  const lastPost = useRef(0), postedHour = useRef<string>("");
   const hourNow = Math.floor(tc);
   useEffect(() => {
-    if (!day || !view?.plan) return;
-    const send = () => { pending.current = null; post({ event: "readings" }).catch(() => {}); };
-    const wait = READINGS_EVERY_MS - (Date.now() - lastPost.current);
-    if (wait <= 0) send();
-    else if (!pending.current) pending.current = setTimeout(send, wait);
-  }, [hourNow, day, view?.plan?.version]);
+    if (!playing || !day || !view?.plan) return;
+    const key = `${date}|${hourNow}`;
+    if (postedHour.current === key) return;
+    postedHour.current = key;
+    post({ event: "readings" }).catch(() => {});
+  }, [hourNow, playing, day, view?.plan?.version]);
 
   async function act(body: Record<string, unknown>, ok: string) {
     setBusy(true); setMsg(null);
@@ -276,7 +276,7 @@ function Sim({ date, setDate }: { date: string; setDate: (d: string) => void }) 
       </section>
 
       <section className="pr-panel pr-audit">
-        <div className="pr-lbl">Audit log · latest 10 · storage: {view.storage === "gist" ? "shared (gist)" : view.storage === "device" ? "this device only" : view.storage}</div>
+        <div className="pr-lbl">Audit log · latest 10 · storage: {view.storage === "blobs" ? "shared (Netlify Blobs)" : view.storage === "gist" ? "shared (gist)" : view.storage === "device" ? "this device only" : view.storage}</div>
         <table className="num"><tbody>
           {view.audit.filter((r) => !r.superseded).slice(-10).reverse().map((r, i) => (
             <tr key={i} style={r.superseded ? { opacity: 0.45 } : undefined} className={r.event.includes("fault injected") ? "warn" : r.event.includes("fixed") || r.event.includes("cleared") || r.event.includes("done") ? "okr" : ""}>
