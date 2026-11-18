@@ -20,6 +20,8 @@ const br = await chromium.launch({ proxy: process.env.HTTPS_PROXY && !local ? { 
 const ctx = await br.newContext({ viewport: { width: 1440, height: 900 }, deviceScaleFactor: 2, ignoreHTTPSErrors: true });
 await ctx.addInitScript((n) => { try { localStorage.setItem("view_as", "duty"); localStorage.setItem("planner", n); } catch {} }, BY);
 const plant = await ctx.newPage(), app = await ctx.newPage();
+const bad = [];                                                     // any non-2xx answer from the functions or the API (403 / 409 / 502 ...)
+ctx.on("response", (r) => { const u = r.url(); if ((u.includes("/.netlify/functions/") || u.includes("/api/")) && r.status() >= 300 && r.status() !== 400) bad.push(`${r.status()} ${r.request().method()} ${u.replace(B, "")}`); });
 const resetDemo = async () => {
   await plant.getByRole("button", { name: "Reset demo for this day" }).click();
   await plant.getByRole("button", { name: "Confirm reset" }).last().click();
@@ -59,6 +61,10 @@ try {
   await app.waitForSelector("[data-testid=plant-alert] .title:has-text('banquet AHUs')", { timeout: 25000 }).catch(() => fail("no alert in Needs attention"));
   const card = app.locator("[data-testid=plant-alert]").filter({ hasText: "banquet AHUs" }).first();
   say(`4. after ${((Date.now() - t0) / 1000).toFixed(1)} s: badge "Needs attention ${badge}"; alert at the top of Needs attention: "${(await card.locator(".title").innerText()).trim()}" · ${(await card.getByTestId("plant-cost").innerText()).split("\n")[0]}`);
+  const today = await ctx.newPage();
+  await today.goto(`${B}/#/today`);
+  await today.waitForSelector("[data-testid=plant-alert] .title:has-text('banquet AHUs')", { timeout: 25000 }).catch(() => fail("no alert on Today"));
+  say(`4. the same alert is on Today; Today's nav badge: "${await today.getByTestId("attention-badge").innerText().catch(() => "none")}"`);
   await app.waitForTimeout(Math.max(0, 20000 - (Date.now() - t0)));
   await plant.getByRole("button", { name: /Pause/ }).click();
   await app.screenshot({ path: `${OUT}attention_alert.png` });
@@ -72,11 +78,14 @@ try {
   await app.screenshot({ path: `${OUT}attention_cleared.png` });
   await app.goto(`${B}/#/today`); await app.waitForSelector("[data-testid=plant-alerts]", { timeout: 20000 }); await app.waitForTimeout(2000);
   if (await app.locator("[data-testid=plant-alert]").count()) fail("alert still on Today");
-  say("5. Today: no Plant Room alert either");
+  await today.waitForSelector("[data-testid=plant-no-alert]", { timeout: 20000 }).catch(() => fail("the Today tab still shows the alert"));
+  say("5. Today: no Plant Room alert either (also in the Today tab left open)");
   // 6. back to 06:00, Reset demo for this day once
   await at(6);
   say(`6. reset at 06:00: ${await resetDemo()}`);
   const after = await (await fetch(`${B}/.netlify/functions/plans?date=${D}&site=GGN`)).json();
   say(`6. saved plan for ${D}: ${after.plan ? `v${after.plan.n} ${after.plan.by}` : "none"}`);
+  say(`storage / API errors during the run: ${bad.length ? bad.join(" | ") : "none (no 403, no 409)"}`);
+  if (bad.some((b) => /^(403|409)/.test(b))) fail("403 / 409 seen");
   say("PASS");
 } finally { await br.close(); }

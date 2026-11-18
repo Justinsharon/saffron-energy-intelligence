@@ -1,7 +1,7 @@
 // Plant Room (simulation) shared state: GET /.netlify/functions/plant?date=YYYY-MM-DD&site=GGN returns the day's approved plan (from the
 // plans log), the steps applied in the Plant Room, the active / fixed demo faults, the latest readings snapshot and the audit log.
 // POST {date, site, event: sync (take in Done / Can't do from the plans log) | fault | clearFault | readings | reset, by, simHour, ...} records one event (web/src/plant/store.ts).
-// Stored in the same private gist as the plans, as plant_state.json: { "<date>@GGN": {...} }. SIMULATION ONLY: nothing here controls
+// Stored in Netlify Blobs (store "saffron", key plant_state.json), next to the plan log (netlify/lib/gist.ts): { "<date>@GGN": {...} }. SIMULATION ONLY: nothing here controls
 // equipment, and simulated readings never feed savings, bills or the live feed.
 import { configured, readFiles, withRetry, writeJSON } from "../lib/gist";
 import { checkActions, planKey, view, type Entry } from "../../src/planlog";
@@ -22,7 +22,7 @@ function approvedPlan(plans: Record<string, Entry>, date: string) {
 }
 
 function out(date: string, e: PlantEntry | undefined, plan: PlantView["plan"]): PlantView {
-  return { date, site: "GGN", exists: !!e && (e.audit.length > 0 || !!e.readings), storage: process.env.SAFFRON_MEMORY_STORE === "1" ? "memory (dev)" : "gist",
+  return { date, site: "GGN", exists: !!e && (e.audit.length > 0 || !!e.readings), storage: process.env.SAFFRON_MEMORY_STORE === "1" ? "memory (dev)" : "blobs",
            plan, ...(e ?? empty()) };
 }
 
