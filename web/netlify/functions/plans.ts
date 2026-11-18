@@ -3,7 +3,7 @@
 // Stored in the existing private gist as plans.json: { "<date>": { versions: [...], log: [...] } }. Nothing is ever deleted.
 // The server stamps the time (IST) and re-checks the guardrails on every submitted plan and edit. Recommend only: no equipment is
 // controlled from here; approving an action records that a person will carry it out.
-import { configured, readJSON, writeJSON } from "../lib/gist";
+import { configured, readJSON, withRetry, writeJSON } from "../lib/gist";
 import { applyEvent, checkActions, isScenario, istStamp, planKey, view, type Entry } from "../../src/planlog";
 
 const FILE = "plans.json";
@@ -43,12 +43,16 @@ export default async (req: Request) => {
     const site = siteOf(b.site);
     if (!DATE.test(String(b.date ?? "")) || !site) return Response.json({ error: "date=YYYY-MM-DD, site=GGN|JAI|GOA" }, { status: 400 });
     const key = planKey(b.date, site);
-    const all = await readJSON<Record<string, Entry>>(FILE, {});
-    let next: Entry;
-    try { next = applyEvent(all[key], { ...b, site }, istStamp()); } catch (e) { return Response.json({ error: String((e as Error).message ?? e) }, { status: 400 }); }
-    all[key] = next;
-    await writeJSON(FILE, all);
-    return Response.json(view(b.date, next, "gist"));
+    const res = await withRetry(async () => {
+      const all = await readJSON<Record<string, Entry>>(FILE, {});
+      let next: Entry;
+      try { next = applyEvent(all[key], { ...b, site }, istStamp()); } catch (e) { return { error: String((e as Error).message ?? e) }; }
+      all[key] = next;
+      await writeJSON(FILE, all);
+      return { next };
+    });
+    if ("error" in res) return Response.json({ error: res.error }, { status: 400 });
+    return Response.json(view(b.date, res.next, "gist"));
   } catch (e) {
     return Response.json({ error: String((e as Error).message ?? e) }, { status: 502 });
   }

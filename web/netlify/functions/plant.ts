@@ -3,7 +3,7 @@
 // POST {date, site, event: sync (take in Done / Can't do from the plans log) | fault | clearFault | readings | reset, by, simHour, ...} records one event (web/src/plant/store.ts).
 // Stored in the same private gist as the plans, as plant_state.json: { "<date>@GGN": {...} }. SIMULATION ONLY: nothing here controls
 // equipment, and simulated readings never feed savings, bills or the live feed.
-import { configured, readFiles, writeJSON } from "../lib/gist";
+import { configured, readFiles, withRetry, writeJSON } from "../lib/gist";
 import { checkActions, planKey, view, type Entry } from "../../src/planlog";
 import { applyPlantEvent, empty, plantKey, type PlantEntry, type PlantView } from "../../src/plant/store";
 import { istStamp } from "../../src/planlog";
@@ -44,11 +44,14 @@ export default async (req: Request) => {
     const b = await req.json();
     if (!DATE.test(String(b.date ?? "")) || String(b.site ?? "GGN").toUpperCase() !== "GGN")
       return Response.json({ error: "date=YYYY-MM-DD, site=GGN" }, { status: 400 });
-    const { all, plans } = await both();
-    const plan = approvedPlan(plans, b.date);
     const key = plantKey(b.date);
-    const r = applyPlantEvent(all[key], b, istStamp(), plan?.steps ?? [], plan?.duty);
-    if (r.entry !== all[key]) { all[key] = r.entry; await writeJSON(FILE, all); }
+    const { all, plan, r } = await withRetry(async () => {
+      const { all, plans } = await both();
+      const plan = approvedPlan(plans, b.date);
+      const r = applyPlantEvent(all[key], b, istStamp(), plan?.steps ?? [], plan?.duty);
+      if (r.entry !== all[key]) { all[key] = r.entry; await writeJSON(FILE, all); }
+      return { all, plan, r };
+    });
     const body = out(b.date, all[key], plan);
     return r.error ? Response.json({ ...body, error: r.error }, { status: 400 }) : Response.json(body);
   } catch (e) {
