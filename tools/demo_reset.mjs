@@ -11,6 +11,14 @@ const post = async (fn, body) => { const r = await fetch(`${BASE}/.netlify/funct
 
 const plan = await (await fetch(`${BASE}/.netlify/functions/plans?date=${date}&site=GGN`)).json();
 console.log(`${BASE} · ${date}`);
+// any saved weather-scenario plan (today or the date) is superseded: the demo runs on the live forecast
+for (const d of [new Date(IST()).toISOString().slice(0, 10), date]) {
+  const v = await (await fetch(`${BASE}/.netlify/functions/plans?date=${d}&site=GGN`)).json();
+  if (v.plan && v.plan.inputs?.weather_mode && v.plan.inputs.weather_mode !== "live") {
+    const [st, j] = await post("plans", { date: d, site: "GGN", event: "supersede", by: BY, reason: "demo uses the live forecast" });
+    console.log(st === 200 ? `scenario plan ${d} v${v.plan.n} by "${v.plan.by}": superseded` : `scenario plan ${d}: refused (${st}): ${j.error}`);
+  }
+}
 if (!plan.plan) console.log("plan: none saved (nothing to withdraw)");
 else if (!/^TEST/i.test(plan.plan.by)) console.log(`plan: v${plan.plan.n} saved by "${plan.plan.by}": not a TEST plan, KEPT`);
 else {

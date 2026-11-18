@@ -41,6 +41,8 @@ function TodayStrip({ site, now }: { site: PlanSite; now: string }) {
 const HEAD: Record<string, string> = {
   "BREACH RISK": "Risk of going over the power limit", WARNING: "Close to the power limit", "STACKING WATCH": "Watch the afternoon", OK: "Comfortably under the limit",
 };
+/** "Open-Meteo hourly forecast" -> "Open-Meteo forecast for Gurugram"; other sources as the plan API names them. */
+const weatherLabel = (w: string, hotel: string) => (/open-meteo/i.test(w) ? `Open-Meteo forecast for ${hotel}` : w || "typical temperatures for this date");
 const DAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 const dow = (d: string) => DAYS[parse(d).getUTCDay()];
 const addDays = (d: string, k: number) => addMs(`${d}T00:00`, k * DAY_MS).slice(0, 10);
@@ -288,9 +290,11 @@ function TomorrowPlan() {
 
   // weather: the live forecast, or a clearly labelled what-if: a real hot-day curve (tools/export_plant_profiles.py -> plan/scenario_hot.json)
   const scen = useData<{ id: "scenario-40C"; date: string; top_c: number; temps: number[]; label: string }>("plan/scenario_hot.json");
+  // the scenario is off for the demo: the toggle exists only with ?scenario=1 in the URL (not linked anywhere); otherwise always the live forecast
+  const scenAllowed = /[?&]scenario=1\b/.test(window.location.search + window.location.hash);
   const [wmode, setWmode] = useState<"live" | "scenario-40C">("live");
-  useEffect(() => { setWmode(saved?.plan?.inputs?.weather_mode === "scenario-40C" ? "scenario-40C" : "live"); }, [saved?.plan?.n, date, site]);
-  const scenOn = wmode === "scenario-40C" && site === "GGN" && !!scen;
+  useEffect(() => { setWmode(scenAllowed && saved?.plan?.inputs?.weather_mode === "scenario-40C" ? "scenario-40C" : "live"); }, [saved?.plan?.n, date, site]);
+  const scenOn = scenAllowed && wmode === "scenario-40C" && site === "GGN" && !!scen;
   const hourly = site === "GGN" ? wx?.hourly.GGN[date] : undefined;
   const temps = scenOn ? scen!.temps : hourly && hourly.length === 24 ? hourly : null;
   // the plan API (models on the actual inputs), 600 ms after the last change; offline estimate in the browser if it fails or is slow
@@ -435,14 +439,14 @@ function TomorrowPlan() {
               <span className="small muted">Notes for the duty team</span>
               <textarea rows={2} value={form.notes} onChange={(e) => set("notes", e.target.value)} placeholder="e.g. VIP arrival 15:00, laundry short-staffed" />
             </label>
-            {site === "GGN" && scen && (
+            {scenAllowed && site === "GGN" && scen && (
               <div className="seg weather-toggle" role="group" aria-label="Weather" style={{ marginTop: 8 }}>
                 <button aria-pressed={!scenOn} onClick={() => setWmode("live")}>Weather: Live forecast</button>
                 <button aria-pressed={scenOn} onClick={() => setWmode("scenario-40C")} data-testid="scenario-40">Scenario: hot May day (40 °C)</button>
               </div>
             )}
             {scenOn && <div className="scenario-banner" role="status" data-testid="scenario-banner"><strong>SCENARIO: hot-day weather ({Math.round(scen!.top_c)} °C), not tomorrow's real forecast.</strong> Uses the {scen!.label}; bookings as entered. A what-if: never in savings, bills or reports.</div>}
-            <p className="small muted">Weather: {res ? `${scenOn ? `SCENARIO: ${scen!.label}` : res.weather || "typical temperatures for this date"}, top ${Math.round(Math.max(...res.forecast.temp))} °C` : "checking…"}. Rooms and covers are suggested from the usual pattern for this time of year.</p>
+            <p className="small muted" data-testid="weather-line">Weather: {res ? `${scenOn ? `SCENARIO: ${scen!.label}` : weatherLabel(res.weather, SITE_NAME[site])}, top ${Math.round(Math.max(...res.forecast.temp))} °C` : "checking…"}. Rooms and covers are suggested from the usual pattern for this time of year.</p>
             <div className="save-row">
               <label className="field name-field">
                 <span className="small muted">Your name (for the log)</span>
